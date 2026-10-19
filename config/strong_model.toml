@@ -1,0 +1,20 @@
+[training]
+minimum_matches = 240
+training_fraction = 0.65
+calibration_fraction = 0.15
+minimum_calibration_matches = 60
+minimum_evaluation_matches = 60
+minimum_log_loss_improvement = 0.005
+blend_steps = 10
+estimators = 160
+learning_rate = 0.04
+num_leaves = 15
+random_seed = 1729
+artifact_directory = "data/models"
+
+[scheduler]
+timezone = "Africa/Blantyre"
+daily_ingest_hour = 5
+results_ingest_hour = 2
+weekly_retrain_day = "sun"
+weekly_retrain_hour = 3

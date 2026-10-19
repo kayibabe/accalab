@@ -140,6 +140,22 @@ class Prediction(Base):
     raw: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
 
+class ModelVersion(Base):
+    """Versioned model artifact metadata and promotion evidence."""
+
+    __tablename__ = "model_versions"
+    __table_args__ = (Index("ix_model_versions_status_created", "status", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="candidate")
+    artifact_path: Mapped[str] = mapped_column(Text, nullable=False)
+    feature_version: Mapped[str] = mapped_column(String(40), nullable=False)
+    trained_through: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=utc_now)
+    promoted_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    metrics: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+
 class Ticket(Base):
     __tablename__ = "tickets"
     __table_args__ = (Index("ix_tickets_target_date_status", "target_date", "status"),)
@@ -255,16 +271,33 @@ class Result(Base):
 
 class AgentLog(Base):
     __tablename__ = "agent_logs"
+    __table_args__ = (
+        Index("ix_agent_logs_fixture_market_asof", "fixture_id", "market_id", "as_of"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     agent_name: Mapped[str] = mapped_column(String(40), nullable=False)
     fixture_id: Mapped[int | None] = mapped_column(ForeignKey("fixtures.id"))
+    prediction_id: Mapped[int | None] = mapped_column(ForeignKey("predictions.id"))
+    market_id: Mapped[int | None] = mapped_column(ForeignKey("markets_registry.id"))
+    selection: Mapped[str | None] = mapped_column(String(160))
+    line: Mapped[Decimal | None] = mapped_column(Numeric(8, 3))
     as_of: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
     input_data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     output_data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     adjustment: Mapped[Decimal | None] = mapped_column(Numeric(8, 7))
     veto_reason: Mapped[str | None] = mapped_column(Text)
     cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))
+    baseline_probability: Mapped[Decimal | None] = mapped_column(Numeric(8, 7))
+    adjusted_probability: Mapped[Decimal | None] = mapped_column(Numeric(8, 7))
+    reference_odds: Mapped[Decimal | None] = mapped_column(Numeric(12, 5))
+    reference_bookmaker_id: Mapped[int | None] = mapped_column(Integer)
+    input_tokens: Mapped[int | None] = mapped_column(Integer)
+    output_tokens: Mapped[int | None] = mapped_column(Integer)
+    model_id: Mapped[str | None] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="ok")
+    error: Mapped[str | None] = mapped_column(Text)
+    why_this_pick: Mapped[str | None] = mapped_column(String(140))
 
 
 class User(Base):
@@ -345,3 +378,13 @@ def _immutable_tracking_update(_mapper, _connection, _target) -> None:
 @event.listens_for(FreeWeeklySample, "before_delete")
 def _immutable_tracking_delete(_mapper, _connection, _target) -> None:
     raise ValueError("Tracking evidence is append-only and cannot be deleted.")
+
+
+@event.listens_for(AgentLog, "before_update")
+def _immutable_agent_log_update(_mapper, _connection, _target) -> None:
+    raise ValueError("Agent call logs are append-only and cannot be updated.")
+
+
+@event.listens_for(AgentLog, "before_delete")
+def _immutable_agent_log_delete(_mapper, _connection, _target) -> None:
+    raise ValueError("Agent call logs are append-only and cannot be deleted.")

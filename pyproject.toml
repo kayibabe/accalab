@@ -9,13 +9,19 @@ description = "AccaLab API probe and football analysis platform"
 requires-python = ">=3.11"
 dependencies = [
     "alembic>=1.13,<2",
+    "anthropic>=0.50,<1",
     "argon2-cffi>=23,<26",
+    "apscheduler>=3.10,<4",
     "fastapi>=0.115,<1",
     "jinja2>=3.1,<4",
+    "lightgbm>=4.3,<5",
     "httpx>=0.27,<1",
     "numpy>=1.26,<3",
     "ortools>=9.10,<10",
+    "pydantic>=2,<3",
+    "pandas>=2,<4",
     "scipy>=1.11,<2",
+    "scikit-learn>=1.4,<2",
     "sqlalchemy>=2.0,<3",
     "uvicorn>=0.30,<1",
 ]

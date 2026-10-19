@@ -35,6 +35,7 @@ from accalab.entitlements import (
 )
 from accalab.models import AuditLog, User
 from accalab.services.entitlements import AccessDenied, require_entitlement
+from accalab.web.admin import build_admin_page_context
 from accalab.web.pages import build_page_context
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -266,7 +267,8 @@ def create_app() -> FastAPI:
             require_entitlement(user.role, match.entitlement)
         except AccessDenied as exc:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN) from exc
-        return _render(request, "placeholder.html", user=user, title=match.label, page_note=None)
+        context = build_admin_page_context(session, section)
+        return _render(request, "admin.html", user=user, **context)
 
     @app.get("/app", include_in_schema=False)
     def app_root():

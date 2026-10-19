@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% from "components/sortable_table.html" import sortable_table %}
+{% block content %}
+<section class="page-section" aria-label="{{ title }} overview">
+  {% if cards %}
+  <div class="summary-grid">
+    {% for label, value in cards %}
+    <article class="summary-card"><p>{{ label }}</p><span>{{ value }}</span></article>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if note %}<p class="page-note">{{ note }}</p>{% endif %}
+  {% if has_table %}
+    {{ sortable_table(columns, rows, default_sort=columns[0][0]) }}
+  {% else %}
+    <div class="empty-state"><p>No records are available for this section yet.</p></div>
+  {% endif %}
+</section>
+{% endblock %}

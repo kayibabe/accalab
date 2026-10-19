@@ -25,6 +25,7 @@ from accalab.entitlements import ADMIN_SECTIONS, SHARED_SECTIONS
 from accalab.config import load_settings
 from accalab.models import (
     AuthToken,
+    AgentLog,
     Fixture,
     FreeWeeklySample,
     MarketRegistry,
@@ -87,7 +88,33 @@ def test_role_access_for_every_sidebar_route():
         for section in ADMIN_SECTIONS:
             response = client.get(section.path)
             assert response.status_code == (200 if role == "admin" else 403)
+            if role == "admin":
+                assert section.label in response.text
+                if section.label not in {"Messaging", "Payments", "Backtests and pre-launch tracking"}:
+                    assert "data-sortable" in response.text, section.path
         engine.dispose()
+
+
+def test_admin_agent_view_uses_summary_and_never_renders_call_payloads():
+    client, factory, engine = _client_for_role("admin")
+    with factory.begin() as session:
+        session.add(
+            AgentLog(
+                agent_name="DataQuality",
+                as_of=utc_now(),
+                input_data={"private": "DO NOT SHOW INPUT"},
+                output_data={"private": "DO NOT SHOW OUTPUT"},
+                cost_usd=Decimal("0.0123"),
+                status="ok",
+            )
+        )
+    response = client.get("/admin/agents")
+    assert response.status_code == 200
+    assert "DataQuality" in response.text
+    assert "DO NOT SHOW INPUT" not in response.text
+    assert "DO NOT SHOW OUTPUT" not in response.text
+    assert "data-sortable" in response.text
+    engine.dispose()
 
 
 def test_free_today_reveals_only_the_logged_sample_and_locks_other_tickets():

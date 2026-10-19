@@ -38,6 +38,17 @@ def main() -> int:
     )
     backtest_parser.add_argument("--output", default="docs/PHASE2_REPORT.md")
     backtest_parser.add_argument("--minimum-training-matches", type=int)
+    retrain_parser = commands.add_parser(
+        "retrain-model", help="Train, evaluate and register a calibrated LightGBM candidate"
+    )
+    retrain_parser.add_argument("--artifact-directory")
+    commands.add_parser(
+        "scheduler", help="Run the configured APScheduler ingestion and retraining jobs"
+    )
+    agent_eval_parser = commands.add_parser(
+        "evaluate-agents", help="Compare settled predictions with and without agent adjustments"
+    )
+    agent_eval_parser.add_argument("--output", default="docs/PHASE5_REPORT.md")
     args = parser.parse_args()
 
     settings = load_settings()
@@ -94,6 +105,71 @@ def main() -> int:
 
         uvicorn.run("accalab.web.app:app", host="127.0.0.1", port=8000)
         return 0
+    if args.command == "scheduler":
+        import logging
+
+        from accalab.scheduler import run_scheduler
+
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+        try:
+            run_scheduler()
+            return 0
+        except Exception as exc:
+            print(f"Scheduler stopped: {exc}", file=sys.stderr)
+            return 1
+    if args.command == "retrain-model":
+        from accalab.config import ROOT
+        from accalab.modeling.stronger import retrain_and_register
+
+        artifact_directory = Path(args.artifact_directory) if args.artifact_directory else None
+        if artifact_directory is not None and not artifact_directory.is_absolute():
+            artifact_directory = ROOT / artifact_directory
+        engine = make_engine()
+        session_factory = make_session_factory(engine)
+        try:
+            with session_factory.begin() as session:
+                result = retrain_and_register(session, artifact_directory=artifact_directory)
+            if result.bundle is None:
+                print(
+                    f"No model candidate trained: {result.report.get('reason', 'insufficient data')}"
+                )
+                return 0
+            outcome = "promoted" if result.promotable else "rejected by promotion rules"
+            market_metrics = ", ".join(
+                f"{market} {values['baseline_log_loss']:.4f} → {values['candidate_log_loss']:.4f}"
+                for market, values in result.report["markets"].items()
+            )
+            print(f"Model {result.bundle.version} {outcome}; holdout log loss: {market_metrics}.")
+            return 0
+        except Exception as exc:
+            print(f"Model retraining failed: {exc}", file=sys.stderr)
+            return 1
+        finally:
+            engine.dispose()
+    if args.command == "evaluate-agents":
+        from accalab.config import ROOT
+        from accalab.agents.evaluation import load_agent_evaluation, render_agent_evaluation
+
+        output_path = Path(args.output)
+        if not output_path.is_absolute():
+            output_path = ROOT / output_path
+        engine = make_engine()
+        session_factory = make_session_factory(engine)
+        try:
+            with session_factory() as session:
+                report = load_agent_evaluation(session)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(render_agent_evaluation(report), encoding="utf-8")
+            print(
+                f"Wrote paired agent evaluation for {report['sample_size']} settled selections "
+                f"to {output_path}."
+            )
+            return 0
+        except Exception as exc:
+            print(f"Agent evaluation failed: {exc}", file=sys.stderr)
+            return 1
+        finally:
+            engine.dispose()
     if args.command == "backtest-model":
         from accalab.config import ROOT
         from accalab.modeling.backtest import run_walk_forward_backtest, write_backtest_report

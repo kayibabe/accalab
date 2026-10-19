@@ -27,6 +27,7 @@ def test_migration_creates_schema_with_append_only_snapshot_triggers(
         "free_weekly_samples",
         "single_selections",
         "single_results",
+        "model_versions",
         "ticket_legs",
         "results",
         "agent_logs",
@@ -38,6 +39,17 @@ def test_migration_creates_schema_with_append_only_snapshot_triggers(
         "alembic_version",
     } <= tables
     assert "session_version" in {column["name"] for column in inspect(engine).get_columns("users")}
+    agent_columns = {column["name"] for column in inspect(engine).get_columns("agent_logs")}
+    assert {
+        "prediction_id",
+        "market_id",
+        "baseline_probability",
+        "adjusted_probability",
+        "input_tokens",
+        "output_tokens",
+        "status",
+        "why_this_pick",
+    } <= agent_columns
     with engine.begin() as connection:
         connection.execute(
             text(

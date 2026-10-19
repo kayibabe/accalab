@@ -1,0 +1,19 @@
+[agents]
+enabled = false
+model = "claude-sonnet-5-5"
+max_tokens = 180
+input_cost_per_million_usd = 2.0
+output_cost_per_million_usd = 10.0
+max_context_characters = 12000
+
+[agents.DataQuality]
+enabled = false
+
+[agents.NewsContext]
+enabled = false
+
+[agents.Market]
+enabled = false
+
+[agents.Critic]
+enabled = false
