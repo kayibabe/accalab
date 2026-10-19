@@ -171,3 +171,29 @@ def test_empty_report_explains_that_no_leagues_were_evaluated() -> None:
     rendered = render_backtest_report(report)
     assert "No completed fixtures were available" in rendered
     assert "| - | 0 |" in rendered
+
+
+def test_season_walk_forward_fits_before_the_test_season() -> None:
+    matches = [
+        MatchResult(
+            fixture_id=row.fixture_id,
+            league_id=row.league_id,
+            kickoff_at=row.kickoff_at,
+            home_team_id=row.home_team_id,
+            away_team_id=row.away_team_id,
+            home_goals=row.home_goals,
+            away_goals=row.away_goals,
+            season=2024 if index < 24 else 2025,
+        )
+        for index, row in enumerate(synthetic_matches(48))
+    ]
+    report = run_walk_forward_backtest(matches, minimum_training_matches=12)
+    assert len(report.forecasts) == 24
+    assert report.league_metrics[0].test_count == 24
+    for forecast in report.forecasts:
+        assert forecast.fixture_id not in forecast.training_match_ids
+        assert forecast.training_cutoff < forecast.kickoff_at
+        assert all(
+            next(row for row in matches if row.fixture_id == fixture_id).season == 2024
+            for fixture_id in forecast.training_match_ids
+        )

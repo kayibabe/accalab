@@ -24,6 +24,10 @@ def main() -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("probe-odds", help="Probe upcoming and historical API-Football odds")
     commands.add_parser("ingest-daily", help="Ingest fixtures, odds and markets for D through D+5")
+    results_parser = commands.add_parser(
+        "ingest-results", help="Ingest completed fixtures for recent league seasons"
+    )
+    results_parser.add_argument("--seasons", type=int, default=2)
     admin_parser = commands.add_parser(
         "create-admin", help="Create the first administrator account"
     )
@@ -101,8 +105,17 @@ def main() -> int:
         session_factory = make_session_factory(engine)
         try:
             with session_factory() as session:
-                fixtures = session.scalars(
-                    select(Fixture)
+                fixtures = session.execute(
+                    select(
+                        Fixture.id,
+                        Fixture.league_id,
+                        Fixture.kickoff_at,
+                        Fixture.home_team_id,
+                        Fixture.away_team_id,
+                        Fixture.home_goals,
+                        Fixture.away_goals,
+                        Fixture.season,
+                    )
                     .where(
                         Fixture.home_goals.is_not(None),
                         Fixture.away_goals.is_not(None),
@@ -112,15 +125,16 @@ def main() -> int:
                 ).all()
             matches = [
                 MatchResult(
-                    fixture_id=fixture.id,
-                    league_id=fixture.league_id,
-                    kickoff_at=fixture.kickoff_at,
-                    home_team_id=fixture.home_team_id,
-                    away_team_id=fixture.away_team_id,
-                    home_goals=fixture.home_goals,
-                    away_goals=fixture.away_goals,
+                    fixture_id=row.id,
+                    league_id=row.league_id,
+                    kickoff_at=row.kickoff_at,
+                    home_team_id=row.home_team_id,
+                    away_team_id=row.away_team_id,
+                    home_goals=row.home_goals,
+                    away_goals=row.away_goals,
+                    season=row.season,
                 )
-                for fixture in fixtures
+                for row in fixtures
             ]
             config = load_model_config()
             report = run_walk_forward_backtest(
@@ -141,6 +155,45 @@ def main() -> int:
             print(f"Model evaluation failed: {exc}", file=sys.stderr)
             return 1
         finally:
+            engine.dispose()
+    if args.command == "ingest-results":
+        from accalab.ingest.results import run_results_ingest
+
+        try:
+            validate_probe_settings(settings)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        engine = make_engine()
+        session_factory = make_session_factory(engine)
+        client = ApiFootballClient(
+            api_key=settings.api_key or "",
+            base_url=settings.base_url,
+            cache_path=settings.cache_path,
+            cache_ttl_seconds=settings.cache_ttl_seconds,
+            timeout_seconds=settings.timeout_seconds,
+            retries=settings.retries,
+            backoff_seconds=settings.backoff_seconds,
+            requests_per_minute=settings.requests_per_minute,
+            daily_quota_limit=settings.daily_quota_limit,
+        )
+        try:
+            with session_factory() as session:
+                summary = run_results_ingest(
+                    client, session, settings, seasons_per_league=args.seasons
+                )
+            print(
+                f"Ingested {summary.fixtures_stored} completed results across "
+                f"{summary.completed_pairs} league-seasons ({summary.skipped_pairs} already complete); "
+                f"{summary.requests_used} requests, {summary.cache_hits} cache hits, "
+                f"{summary.quota_remaining} provider requests remaining."
+            )
+            return 0
+        except Exception as exc:
+            print(f"Results ingestion stopped: {exc}", file=sys.stderr)
+            return 1
+        finally:
+            client.close()
             engine.dispose()
     if args.command == "probe-odds":
         try:

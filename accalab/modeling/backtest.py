@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Iterable, Mapping
 
@@ -43,6 +43,9 @@ class LeagueMetrics:
 @dataclass(frozen=True)
 class BacktestReport:
     run_as_of: datetime
+    input_fixture_count: int
+    input_league_count: int
+    input_seasons: tuple[int, ...]
     forecasts: tuple[ForecastRecord, ...]
     league_metrics: tuple[LeagueMetrics, ...]
     skipped_leagues: Mapping[int, str]
@@ -126,6 +129,90 @@ def walk_forward_forecasts(
     return tuple(forecasts)
 
 
+def _season_walk_forward_forecasts(
+    matches: tuple[MatchResult, ...], *, config: ModelConfig, minimum_training_matches: int
+) -> tuple[tuple[ForecastRecord, ...], dict[int, str]]:
+    """Fit once at each season boundary and evaluate the following season."""
+    grouped: dict[int, list[MatchResult]] = defaultdict(list)
+    for match in matches:
+        grouped[match.league_id].append(match)
+    forecasts: list[ForecastRecord] = []
+    skipped: dict[int, str] = {}
+    for league_id, league_matches in sorted(grouped.items()):
+        seasons = sorted({row.season for row in league_matches if row.season is not None})
+        if len(seasons) < 2:
+            skipped[league_id] = "At least two season labels are required for a forward season fold."
+            continue
+        for test_season in seasons[1:]:
+            test_rows = [row for row in league_matches if row.season == test_season]
+            if not test_rows:
+                continue
+            cutoff = min(_aware(row.kickoff_at) for row in test_rows) - timedelta(microseconds=1)
+            training = [
+                row
+                for row in league_matches
+                if row.season is not None
+                and row.season < test_season
+                and _aware(row.kickoff_at) < cutoff
+            ]
+            if len(training) < minimum_training_matches:
+                skipped[league_id] = "Insufficient earlier-season results for the configured training minimum."
+                continue
+            training_teams = {
+                team_id
+                for row in training
+                for team_id in (row.home_team_id, row.away_team_id)
+            }
+            if len(training_teams) > config.maximum_backtest_teams:
+                skipped[league_id] = (
+                    f"Skipped season fold with {len(training_teams)} training teams; "
+                    f"configured maximum is {config.maximum_backtest_teams}."
+                )
+                continue
+            try:
+                model = fit_dixon_coles(
+                    training,
+                    league_id=league_id,
+                    as_of=cutoff,
+                    config=config,
+                    minimum_matches=minimum_training_matches,
+                )
+            except (ArithmeticError, ValueError) as exc:
+                skipped[league_id] = f"Season fold could not fit the model: {exc}"
+                continue
+            training_ids = set(model.training_match_ids)
+            for test_match in test_rows:
+                if test_match.fixture_id in training_ids or any(
+                    _aware(row.kickoff_at) >= _aware(test_match.kickoff_at) for row in training
+                ):
+                    raise AssertionError("Walk-forward leakage detected in a season fold.")
+                try:
+                    matrix = model.score_matrix(
+                        test_match.home_team_id,
+                        test_match.away_team_id,
+                        max_goals=config.max_goals,
+                    )
+                except ValueError as exc:
+                    if "missing from this league model" in str(exc):
+                        continue
+                    raise
+                result = derive_market_forecast(matrix).markets["1X2"][None]
+                total = sum(result[key] for key in OUTCOME_KEYS)
+                forecasts.append(
+                    ForecastRecord(
+                        fixture_id=test_match.fixture_id,
+                        league_id=league_id,
+                        kickoff_at=_aware(test_match.kickoff_at),
+                        actual=_actual_outcome(test_match),
+                        probabilities={key: result[key] / total for key in OUTCOME_KEYS},
+                        training_match_ids=model.training_match_ids,
+                        training_cutoff=model.as_of,
+                        optimizer_converged=model.optimizer_converged,
+                    )
+                )
+    return tuple(forecasts), skipped
+
+
 def _calibration_bins(
     forecasts: list[ForecastRecord], bin_count: int
 ) -> tuple[tuple[tuple[int, int, float, float], ...], float]:
@@ -192,18 +279,36 @@ def run_walk_forward_backtest(
 ) -> BacktestReport:
     config = config or load_model_config()
     rows = tuple(matches)
-    forecasts = walk_forward_forecasts(
-        rows, config=config, minimum_training_matches=minimum_training_matches
+    min_train = (
+        config.minimum_training_matches
+        if minimum_training_matches is None
+        else minimum_training_matches
     )
+    if min_train < 3:
+        raise ValueError("Walk-forward evaluation requires at least three training matches.")
+    season_folds = bool(rows) and all(row.season is not None for row in rows)
+    if season_folds:
+        forecasts, skipped = _season_walk_forward_forecasts(
+            rows, config=config, minimum_training_matches=min_train
+        )
+    else:
+        forecasts = walk_forward_forecasts(
+            rows, config=config, minimum_training_matches=min_train
+        )
+        skipped = {}
     metrics = calculate_metrics(forecasts, config=config)
     all_leagues = {row.league_id for row in rows}
     evaluated = {row.league_id for row in forecasts}
-    skipped = {
-        league_id: "Insufficient earlier results or an unseen team in the evaluation window."
-        for league_id in sorted(all_leagues - evaluated)
-    }
+    for league_id in sorted(all_leagues - evaluated):
+        skipped.setdefault(
+            league_id,
+            "Insufficient earlier results or an unseen team in the evaluation window.",
+        )
     return BacktestReport(
         run_as_of=_aware(run_as_of or datetime.now(UTC)),
+        input_fixture_count=len(rows),
+        input_league_count=len(all_leagues),
+        input_seasons=tuple(sorted({row.season for row in rows if row.season is not None})),
         forecasts=forecasts,
         league_metrics=metrics,
         skipped_leagues=skipped,
@@ -219,7 +324,12 @@ def render_backtest_report(report: BacktestReport, *, config: ModelConfig | None
         "",
         "This expanding-window evaluation predicts each match before kickoff using only earlier results in that league. It reports model quality, not betting performance or a live record.",
         "",
+        f"Input: {report.input_fixture_count:,} completed fixtures from {report.input_league_count:,} leagues; season labels: {', '.join(map(str, report.input_seasons)) if report.input_seasons else 'not recorded'}.",
+        "",
+        "Season-labelled fixture data uses a rolling-origin fold at each new season: the model is fit before the first test-season kickoff and held fixed for that season.",
+        "",
         f"Time decay: exp(-{config.time_decay_per_day:g} × age in days); score matrix maximum: {config.max_goals} goals per side.",
+        f"Backtest team-count ceiling: {config.maximum_backtest_teams} per league-season fit.",
         "",
         "| League ID | Forecasts | Earlier results (min / median) | Log loss | Brier (3 outcomes) | Calibration error |",
         "|---:|---:|---:|---:|---:|---:|",

@@ -22,6 +22,7 @@ class MatchResult:
     away_team_id: int
     home_goals: int
     away_goals: int
+    season: int | None = None
 
 
 @dataclass(frozen=True)

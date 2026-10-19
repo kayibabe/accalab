@@ -6,6 +6,7 @@ regularization = 0.0001
 
 [evaluation]
 calibration_bins = 10
+maximum_backtest_teams = 200
 
 [eligibility]
 minimum_odds = 1.30
