@@ -1,0 +1,4 @@
+[free_weekly_sample]
+enabled = true
+weekday = "saturday"
+timezone = "Africa/Blantyre"

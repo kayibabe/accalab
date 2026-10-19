@@ -154,6 +154,69 @@ class Ticket(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=utc_now)
 
 
+class FreeWeeklySample(Base):
+    """The rule-selected official ticket revealed to Free users for one week."""
+
+    __tablename__ = "free_weekly_samples"
+    __table_args__ = (UniqueConstraint("ticket_id", name="uq_free_weekly_sample_ticket"),)
+
+    week_start: Mapped[date] = mapped_column(Date, primary_key=True)
+    ticket_id: Mapped[str] = mapped_column(ForeignKey("tickets.id"), nullable=False)
+    selected_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    selection_rule: Mapped[str] = mapped_column(String(100), nullable=False)
+
+
+class SingleSelection(Base):
+    """An eligible official selection tracked flat regardless of ticket inclusion."""
+
+    __tablename__ = "single_selections"
+    __table_args__ = (
+        UniqueConstraint(
+            "target_date",
+            "fixture_id",
+            "market_id",
+            "selection",
+            "line",
+            "run_type",
+            name="uq_single_selection_daily",
+        ),
+        Index("ix_single_selections_date", "target_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    target_date: Mapped[date] = mapped_column(Date, nullable=False)
+    run_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    fixture_id: Mapped[int] = mapped_column(ForeignKey("fixtures.id"), nullable=False)
+    market_id: Mapped[int] = mapped_column(ForeignKey("markets_registry.id"), nullable=False)
+    selection: Mapped[str] = mapped_column(String(160), nullable=False)
+    line: Mapped[Decimal | None] = mapped_column(Numeric(8, 3))
+    odds_snapshot_id: Mapped[int] = mapped_column(ForeignKey("odds_snapshots.id"), nullable=False)
+    odds: Mapped[Decimal] = mapped_column(Numeric(12, 5), nullable=False)
+    probability: Mapped[Decimal] = mapped_column(Numeric(8, 7), nullable=False)
+    p_low: Mapped[Decimal] = mapped_column(Numeric(8, 7), nullable=False)
+    as_of: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    why: Mapped[str] = mapped_column(String(140), nullable=False)
+
+
+class SingleResult(Base):
+    """Append-only settlement history for a flat eligible selection."""
+
+    __tablename__ = "single_results"
+    __table_args__ = (
+        Index("ix_single_results_selection_settled", "single_selection_id", "settled_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    single_selection_id: Mapped[int] = mapped_column(
+        ForeignKey("single_selections.id", ondelete="CASCADE"), nullable=False
+    )
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    payout_multiplier: Mapped[Decimal] = mapped_column(Numeric(12, 6), nullable=False)
+    settled_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=utc_now)
+    correction_of_id: Mapped[int | None] = mapped_column(ForeignKey("single_results.id"))
+    raw: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+
 class TicketLeg(Base):
     __tablename__ = "ticket_legs"
     __table_args__ = (
@@ -266,3 +329,19 @@ def _immutable_snapshot_update(_mapper, _connection, _target) -> None:
 @event.listens_for(OddsSnapshot, "before_delete")
 def _immutable_snapshot_delete(_mapper, _connection, _target) -> None:
     raise ValueError("Odds snapshots are append-only and cannot be deleted.")
+
+
+@event.listens_for(Result, "before_update")
+@event.listens_for(SingleSelection, "before_update")
+@event.listens_for(SingleResult, "before_update")
+@event.listens_for(FreeWeeklySample, "before_update")
+def _immutable_tracking_update(_mapper, _connection, _target) -> None:
+    raise ValueError("Tracking evidence is append-only; add a correction record instead.")
+
+
+@event.listens_for(Result, "before_delete")
+@event.listens_for(SingleSelection, "before_delete")
+@event.listens_for(SingleResult, "before_delete")
+@event.listens_for(FreeWeeklySample, "before_delete")
+def _immutable_tracking_delete(_mapper, _connection, _target) -> None:
+    raise ValueError("Tracking evidence is append-only and cannot be deleted.")

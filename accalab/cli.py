@@ -158,6 +158,7 @@ def main() -> int:
             engine.dispose()
     if args.command == "ingest-results":
         from accalab.ingest.results import run_results_ingest
+        from accalab.tracking.settlement import settle_completed_tickets
 
         try:
             validate_probe_settings(settings)
@@ -182,11 +183,16 @@ def main() -> int:
                 summary = run_results_ingest(
                     client, session, settings, seasons_per_league=args.seasons
                 )
+                settlement = settle_completed_tickets(session)
+                session.commit()
             print(
                 f"Ingested {summary.fixtures_stored} completed results across "
                 f"{summary.completed_pairs} league-seasons ({summary.skipped_pairs} already complete); "
                 f"{summary.requests_used} requests, {summary.cache_hits} cache hits, "
-                f"{summary.quota_remaining} provider requests remaining."
+                f"{summary.quota_remaining} provider requests remaining. "
+                f"Settled {settlement['tickets_settled']} tickets with "
+                f"{settlement['new_results']} new leg results and "
+                f"{settlement['corrections']} corrections."
             )
             return 0
         except Exception as exc:

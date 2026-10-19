@@ -14,13 +14,14 @@ dependencies = [
     "jinja2>=3.1,<4",
     "httpx>=0.27,<1",
     "numpy>=1.26,<3",
+    "ortools>=9.10,<10",
     "scipy>=1.11,<2",
     "sqlalchemy>=2.0,<3",
     "uvicorn>=0.30,<1",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8,<9", "ruff>=0.6,<1"]
+dev = ["hypothesis>=6,<7", "pytest>=8,<9", "ruff>=0.6,<1"]
 
 [project.scripts]
 accalab = "accalab.cli:main"

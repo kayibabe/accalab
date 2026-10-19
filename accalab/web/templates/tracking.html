@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% from "components/sortable_table.html" import sortable_table %}
+{% block content %}
+<header class="page-heading">
+  <p class="eyebrow">{{ selected_date if selected_date else today }} · {{ timezone }}</p>
+  <h1>{{ title }}</h1>
+</header>
+
+{% if section == "today" %}
+  {% if user.role == "free" %}
+    <section class="summary-grid" aria-label="Today's overview">
+      <article class="summary-card"><span>Fixtures</span><span class="summary-value">{{ fixtures|length }}</span></article>
+      <article class="summary-card"><span>Ticket cards</span><span class="summary-value">{{ ticket_cards|length }}</span></article>
+    </section>
+    <section class="page-section">
+      <h2>Today's fixtures</h2>
+      {% if fixtures %}{{ sortable_table([("kickoff","Kickoff","text"),("league","League","text"),("home","Home","text"),("away","Away","text"),("status","Status","text")], fixtures, "kickoff") }}{% else %}<p class="empty-note">No fixtures are available for today.</p>{% endif %}
+    </section>
+  {% endif %}
+  {% if sample_ticket_id %}
+    <section class="page-section"><h2>Free sample</h2>
+      {% for card in ticket_cards if card.is_sample %}{% include "components/ticket_card.html" %}{% endfor %}
+    </section>
+  {% endif %}
+  <section class="page-section"><h2>Today's tickets</h2>
+    {% set todays = ticket_cards|selectattr("target_date","equalto",today)|list %}
+    {% if todays %}{% for card in todays if not card.is_sample %}{% include "components/ticket_card.html" %}{% endfor %}
+    {% elif user.role != "free" %}<p class="empty-note">No tickets have been built for today.</p>{% endif %}
+  </section>
+  {% if user.role != "free" %}
+    <section class="page-section"><h2>Today's fixtures</h2>
+      {% if fixtures %}{{ sortable_table([("kickoff","Kickoff","text"),("league","League","text"),("home","Home","text"),("away","Away","text"),("status","Status","text")], fixtures, "kickoff") }}{% else %}<p class="empty-note">No fixtures are available for today.</p>{% endif %}
+    </section>
+  {% endif %}
+
+{% elif section == "fixtures" %}
+  <form class="date-filter" method="get">
+    <label for="date">Fixture date</label>
+    <input id="date" name="date" type="date" value="{{ selected_date }}">
+    <button type="submit">Show fixtures</button>
+  </form>
+  {% if fixtures %}{{ sortable_table([("kickoff","Kickoff","text"),("league","League","text"),("home","Home","text"),("away","Away","text"),("score","Score","text"),("status","Status","text")], fixtures, "kickoff") }}
+  {% else %}<p class="empty-note">No fixtures are available for this date.</p>{% endif %}
+
+{% elif section == "picks" %}
+  <p class="muted">Odds as of {{ odds_as_of or "—" }}. Prices and estimates use the latest saved information available at that time.</p>
+  {% if picks %}{{ sortable_table([("kickoff","Kickoff","text"),("fixture","Fixture","text"),("market","Market","text"),("selection","Selection","text"),("odds","Odds","odds"),("probability","Probability / lower bound","text"),("ev","EV","text")], picks, "kickoff") }}
+    <section class="page-section"><h2>Why these picks</h2>
+      {% for pick in picks %}<details class="pick-detail"><summary>{{ pick.fixture }} · {{ pick.market }} · {{ pick.selection }}</summary><p>{{ pick.why }}</p></details>{% endfor %}
+    </section>
+  {% else %}<p class="empty-note">No saved picks are available for this date.</p>{% endif %}
+
+{% elif section == "tickets" or section == "results" %}
+  {% if user.role == "free" %}
+    <p class="muted">Today's tickets appear as locked cards. Recent settled tickets include their legs and results.</p>
+  {% endif %}
+  {% if ticket_cards %}
+    {% for card in ticket_cards %}{% include "components/ticket_card.html" %}{% endfor %}
+  {% else %}<p class="empty-note">No tickets are available for this view.</p>{% endif %}
+
+{% elif section == "performance" %}
+  {% set report = performance %}
+  <section class="summary-grid" aria-label="Performance summary">
+    <article class="summary-card"><span>Settled tickets</span><span class="summary-value">{{ report.aggregate.tickets }}</span></article>
+    <article class="summary-card"><span>Net return</span><span class="summary-value">{{ "%.2f"|format(report.aggregate.net) }}</span></article>
+    <article class="summary-card"><span>ROI</span><span class="summary-value">{% if report.aggregate.roi is not none %}{{ "%.1f"|format(report.aggregate.roi * 100) }}%{% else %}—{% endif %}</span></article>
+    <article class="summary-card"><span>95% range</span><span class="summary-value">{% if report.aggregate.roi_ci_low is not none %}{{ "%.1f"|format(report.aggregate.roi_ci_low * 100) }}% to {{ "%.1f"|format(report.aggregate.roi_ci_high * 100) }}%{% else %}—{% endif %}</span></article>
+  </section>
+  {% if user.role == "free" %}
+    <p class="footnote">30-day headline · {{ report.aggregate.tickets }} settled tickets. {{ report.sample_size_note }}</p>
+  {% else %}
+    <p class="footnote">{{ report.sample_size_note }}</p>
+    <section class="page-section"><h2>By day</h2>
+      {{ sortable_table([("period","Day","date"),("tickets","Tickets","number"),("staked","Staked","number"),("returned","Returned","number"),("hit_rate","Hit rate","number"),("net_roi","Net · ROI","text"),("roi_ci","95% range","text")], report.by_day, "period") }}
+    </section>
+    <section class="page-section"><h2>By month</h2>
+      {{ sortable_table([("period","Month","text"),("tickets","Tickets","number"),("staked","Staked","number"),("returned","Returned","number"),("hit_rate","Hit rate","number"),("net_roi","Net · ROI","text"),("roi_ci","95% range","text")], report.by_month, "period") }}
+    </section>
+    <section class="page-section"><h2>By year</h2>
+      {{ sortable_table([("period","Year","number"),("tickets","Tickets","number"),("staked","Staked","number"),("returned","Returned","number"),("hit_rate","Hit rate","number"),("net_roi","Net · ROI","text"),("roi_ci","95% range","text")], report.by_year, "period") }}
+    </section>
+    <section class="page-section"><h2>By band</h2>
+      {{ sortable_table([("period","Band","text"),("tickets","Tickets","number"),("staked","Staked","number"),("returned","Returned","number"),("hit_rate","Hit rate","number"),("net_roi","Net · ROI","text"),("roi_ci","95% range","text")], report.by_band, "period") }}
+    </section>
+    <section class="page-section"><h2>By tier</h2>
+      {{ sortable_table([("period","Tier","text"),("tickets","Tickets","number"),("staked","Staked","number"),("returned","Returned","number"),("hit_rate","Hit rate","number"),("net_roi","Net · ROI","text"),("roi_ci","95% range","text")], report.by_tier, "period") }}
+    </section>
+    <section class="page-section"><h2>Eligible legs as flat singles</h2>
+      <p>{{ report.singles.tickets }} settled legs · net {{ "%.2f"|format(report.singles.net) }} · ROI {% if report.singles.roi is not none %}{{ "%.1f"|format(report.singles.roi * 100) }}%{% else %}—{% endif %} · 95% range {% if report.singles.roi_ci_low is not none %}{{ "%.1f"|format(report.singles.roi_ci_low * 100) }}% to {{ "%.1f"|format(report.singles.roi_ci_high * 100) }}%{% else %}—{% endif %}</p>
+      <p class="footnote">{{ report.singles.sample_note }}</p>
+      <p class="footnote">Showing {{ report.singles_rows|length }} of {{ report.singles_total }} settled singles.</p>
+      {% if report.singles_rows %}
+        {{ sortable_table([("date","Date","date"),("fixture","Fixture","text"),("market","Market","text"),("selection","Selection","text"),("odds","Odds","odds"),("probability","Probability / lower bound","text"),("result_return","Result · return","text")], report.singles_rows, "date") }}
+        <div class="single-details">{% for row in report.singles_rows %}<details><summary>{{ row.date }} · {{ row.fixture }} · {{ row.selection }}</summary><p>EV {{ "%+.1f"|format(row.ev * 100) }}% · {{ row.why }}</p></details>{% endfor %}</div>
+      {% endif %}
+      {% if report.singles_pages > 1 %}
+        <nav class="pagination" aria-label="Singles pages">
+          {% if report.singles_page > 1 %}<a href="/app/performance?page={{ report.singles_page - 1 }}">Previous</a>{% endif %}
+          <span>Page {{ report.singles_page }} of {{ report.singles_pages }}</span>
+          {% if report.singles_page < report.singles_pages %}<a href="/app/performance?page={{ report.singles_page + 1 }}">Next</a>{% endif %}
+        </nav>
+      {% endif %}
+    </section>
+    <section class="page-section"><h2>Leg health</h2>
+      {{ sortable_table([("metric","Measure","text"),("value","Value","text"),("sample","Sample","number")], leg_health_rows, "metric") }}
+    </section>
+    <section class="page-section"><h2>Calibration by predicted probability</h2>
+      {{ sortable_table([("bucket","Probability range","text"),("mean_probability","Mean predicted","text"),("observed_rate","Observed outcome","text"),("sample","Settled legs","number")], calibration_rows, "bucket") }}
+    </section>
+  {% endif %}
+{% endif %}
+{% endblock %}

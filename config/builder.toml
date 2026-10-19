@@ -1,0 +1,12 @@
+[builder]
+log_scale = 100000
+solver_max_seconds = 5.0
+timezone = "Africa/Blantyre"
+
+[weekday]
+minimum_pool = 12
+enabled_bands = ["T1", "T2", "T3"]
+
+[weekend]
+minimum_pool = 20
+enabled_bands = ["T1", "T2", "T3", "T4", "T5"]

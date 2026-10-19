@@ -7,7 +7,7 @@
       {% endfor %}
     </tr></thead>
     <tbody>
-      {% for row in rows %}<tr>{% for key, label, kind in columns %}<td data-sort-value="{{ row[key] }}">{{ row[key] }}</td>{% endfor %}</tr>{% endfor %}
+      {% for row in rows %}<tr>{% for key, label, kind in columns %}<td data-sort-value="{{ row[key ~ '_sort'] if key ~ '_sort' in row else row[key] }}">{{ row[key ~ '_display'] if key ~ '_display' in row else row[key] }}</td>{% endfor %}</tr>{% endfor %}
     </tbody>
   </table>
 </div>

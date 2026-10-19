@@ -1,0 +1,22 @@
+<article class="ticket-card">
+  <div class="ticket-heading">
+    <div><h2>{% if card.is_sample %}Free sample{% else %}{{ card.band }} ticket{% endif %}</h2>
+      <p>{{ card.target_date }} · {{ card.leg_count }} legs · {{ card.status }} · Odds as of {{ card.as_of }}</p>
+    </div>
+    {% if card.locked %}
+      <div class="ticket-meta"><span>Combined-odds range</span><span class="summary-value">{{ card.locked_odds_range }}</span><span>{{ card.run_type }}</span></div>
+    {% else %}
+      <div class="ticket-meta"><span>Combined odds</span><span class="summary-value">{{ card.combined_odds }}</span><span>{{ card.tier }}</span></div>
+    {% endif %}
+  </div>
+  {% if card.locked %}
+    <p class="muted">Leg details are available on eligible settled tickets.</p>
+  {% elif card.legs %}
+    {{ sortable_table([("fixture","Fixture","text"),("market","Market","text"),("selection","Selection","text"),("line","Line","number"),("odds","Odds","odds"),("result","Result","text"),("score","Score","text")], card.legs, "fixture") }}
+    {% if user.role != "free" %}
+      {{ sortable_table([("fixture","Fixture","text"),("probability","Probability","text"),("p_low","Lower bound","text"),("ev","EV","text"),("why","Why this pick","text")], card.legs, "fixture") }}
+    {% endif %}
+  {% else %}
+    <p class="empty-note">No legs are recorded for this ticket.</p>
+  {% endif %}
+</article>
