@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>{{ title }} · AccaLab</title>
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <script defer src="/static/js/app.js"></script>
+</head>
+<body>
+  {% if user %}
+  <div class="app-layout">
+    <aside class="sidebar" aria-label="Main navigation">
+      <a class="brand" href="/app/today">AccaLab</a>
+      {% for group, links in sidebar %}
+        {% if group %}<h2 class="nav-group">{{ group }}</h2>{% endif %}
+        <nav>
+        {% for item in links %}
+          {% if user.role == 'free' and item.entitlement == 'pro' %}
+            <a class="nav-link locked" href="{{ item.path }}" aria-label="{{ item.label }}, Pro access">{{ item.label }} <span aria-hidden="true">🔒</span></a>
+          {% else %}
+            <a class="nav-link" href="{{ item.path }}" {% if title == item.label %}aria-current="page"{% endif %}>{{ item.label }}</a>
+          {% endif %}
+        {% endfor %}
+        </nav>
+      {% endfor %}
+      <form method="post" action="/logout" class="logout-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="button button-quiet">Sign out</button>
+      </form>
+    </aside>
+    <main class="main-content">
+      <header class="page-heading">
+        <p class="eyebrow">{{ 'Administration' if request.url.path.startswith('/admin') else 'AccaLab' }}</p>
+        <h1>{{ title }}</h1>
+        <button type="button" class="theme-toggle" data-theme-toggle aria-label="Switch appearance">Switch appearance</button>
+      </header>
+  {% else %}
+    <main class="auth-shell">
+      <a class="brand" href="/login">AccaLab</a>
+  {% endif %}
+  {% block content %}{% endblock %}
+  </main>
+  {% if user %}</div>{% endif %}
+</body>
+</html>

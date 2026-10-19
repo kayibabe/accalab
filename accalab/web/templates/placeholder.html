@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card empty-state">
+  {% if title == 'Account' %}
+    <nav class="account-tabs" aria-label="Account sections">
+      <a href="#profile">Profile</a><a href="#plan">Plan and billing</a><a href="#notifications">Notifications</a><a href="#display">Display</a>
+    </nav>
+    <section id="profile"><h2>Profile</h2><p>This section is ready for the next phase.</p></section>
+    <section id="plan"><h2>Plan and billing</h2><p>This section is ready for the next phase.</p></section>
+    <section id="notifications"><h2>Notifications</h2><p>This section is ready for the next phase.</p></section>
+    <section id="display"><h2>Display</h2><label for="text-size">Text size</label>
+      <select id="text-size" data-text-size><option value="100">100 percent</option><option value="115">115 percent</option><option value="130">130 percent</option></select>
+    </section>
+  {% else %}
+    {% if page_note %}<p>{{ page_note }}</p>{% endif %}
+    <p>This section is ready for the next phase.</p>
+  {% endif %}
+</section>
+{% endblock %}

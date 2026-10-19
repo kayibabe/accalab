@@ -1,0 +1,235 @@
+"""Command line interface."""
+
+from __future__ import annotations
+
+import argparse
+import getpass
+import sys
+from datetime import datetime, timedelta
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from accalab.config import load_settings, validate_probe_settings
+from accalab.db import make_engine, make_session_factory
+from accalab.auth.security import hash_password, normalize_email
+from accalab.ingest.api_football import ApiFootballClient
+from accalab.ingest.daily import run_daily_ingest
+from accalab.probe import render_report, run_probe, write_report
+from accalab.models import AuditLog, User
+from sqlalchemy import select
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="accalab")
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("probe-odds", help="Probe upcoming and historical API-Football odds")
+    commands.add_parser("ingest-daily", help="Ingest fixtures, odds and markets for D through D+5")
+    admin_parser = commands.add_parser(
+        "create-admin", help="Create the first administrator account"
+    )
+    admin_parser.add_argument("--email", required=True)
+    commands.add_parser("serve", help="Run the AccaLab web application")
+    backtest_parser = commands.add_parser(
+        "backtest-model", help="Run the expanding-window model quality evaluation"
+    )
+    backtest_parser.add_argument("--output", default="docs/PHASE2_REPORT.md")
+    backtest_parser.add_argument("--minimum-training-matches", type=int)
+    args = parser.parse_args()
+
+    settings = load_settings()
+    if args.command == "create-admin":
+        email = normalize_email(args.email)
+        password = getpass.getpass("New administrator password: ")
+        confirmation = getpass.getpass("Confirm password: ")
+        if password != confirmation:
+            print("Passwords do not match.", file=sys.stderr)
+            return 2
+        try:
+            password_hash = hash_password(password)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        engine = make_engine()
+        sessions = make_session_factory(engine)
+        try:
+            with sessions.begin() as session:
+                if session.scalar(select(User.id).where(User.role == "admin")) is not None:
+                    print(
+                        "An administrator already exists; refusing to create another first admin.",
+                        file=sys.stderr,
+                    )
+                    return 2
+                if session.scalar(select(User.id).where(User.email == email)) is not None:
+                    print("That email address is already in use.", file=sys.stderr)
+                    return 2
+                user = User(
+                    email=email,
+                    password_hash=password_hash,
+                    role="admin",
+                    plan="admin",
+                    status="active",
+                    email_verified_at=datetime.now().astimezone(),
+                )
+                session.add(user)
+                session.flush()
+                session.add(
+                    AuditLog(
+                        actor_user_id=user.id,
+                        action="first_admin_created",
+                        target_type="user",
+                        target_id=str(user.id),
+                        details={"email": email},
+                    )
+                )
+            print(f"Administrator created for {email}.")
+            return 0
+        finally:
+            engine.dispose()
+    if args.command == "serve":
+        import uvicorn
+
+        uvicorn.run("accalab.web.app:app", host="127.0.0.1", port=8000)
+        return 0
+    if args.command == "backtest-model":
+        from accalab.config import ROOT
+        from accalab.modeling.backtest import run_walk_forward_backtest, write_backtest_report
+        from accalab.modeling.config import load_model_config
+        from accalab.modeling.dixon_coles import MatchResult
+        from accalab.models import Fixture
+
+        engine = make_engine()
+        session_factory = make_session_factory(engine)
+        try:
+            with session_factory() as session:
+                fixtures = session.scalars(
+                    select(Fixture)
+                    .where(
+                        Fixture.home_goals.is_not(None),
+                        Fixture.away_goals.is_not(None),
+                        Fixture.status.in_(("FT", "AET", "PEN")),
+                    )
+                    .order_by(Fixture.league_id, Fixture.kickoff_at, Fixture.id)
+                ).all()
+            matches = [
+                MatchResult(
+                    fixture_id=fixture.id,
+                    league_id=fixture.league_id,
+                    kickoff_at=fixture.kickoff_at,
+                    home_team_id=fixture.home_team_id,
+                    away_team_id=fixture.away_team_id,
+                    home_goals=fixture.home_goals,
+                    away_goals=fixture.away_goals,
+                )
+                for fixture in fixtures
+            ]
+            config = load_model_config()
+            report = run_walk_forward_backtest(
+                matches,
+                config=config,
+                minimum_training_matches=args.minimum_training_matches,
+            )
+            output_path = Path(args.output)
+            if not output_path.is_absolute():
+                output_path = ROOT / output_path
+            write_backtest_report(output_path, report, config=config)
+            print(
+                f"Wrote model-quality evaluation for {len(report.league_metrics)} leagues "
+                f"and {len(report.forecasts)} forecasts to {output_path}."
+            )
+            return 0
+        except Exception as exc:
+            print(f"Model evaluation failed: {exc}", file=sys.stderr)
+            return 1
+        finally:
+            engine.dispose()
+    if args.command == "probe-odds":
+        try:
+            validate_probe_settings(settings)
+        except ValueError as exc:
+            missing = []
+            if not settings.api_key:
+                missing.append("API_FOOTBALL_KEY is missing")
+            message = f"Live probe not run: {'; '.join(missing) if missing else exc}"
+            today = datetime.now(ZoneInfo(settings.timezone)).date()
+            probe_window = {
+                "run_date": today.isoformat(),
+                "future_window": [
+                    today.isoformat(),
+                    (today + timedelta(days=settings.future_days)).isoformat(),
+                ],
+                "requests_used_this_run": 0,
+                "requests_used_end": 0,
+                "configured_limit": settings.daily_quota_limit,
+                "provider_remaining": None,
+                "provider_limit": None,
+            }
+            write_report(settings, render_report(probe_window, note=message))
+            print(f"{message}\nReport written to {settings.report_path}", file=sys.stderr)
+            return 2
+        client = ApiFootballClient(
+            api_key=settings.api_key or "",
+            base_url=settings.base_url,
+            cache_path=settings.cache_path,
+            cache_ttl_seconds=settings.cache_ttl_seconds,
+            timeout_seconds=settings.timeout_seconds,
+            retries=settings.retries,
+            backoff_seconds=settings.backoff_seconds,
+            requests_per_minute=settings.requests_per_minute,
+            daily_quota_limit=settings.daily_quota_limit,
+        )
+        try:
+            result = run_probe(client, settings)
+            result["configured_limit"] = settings.daily_quota_limit
+            report = render_report(result)
+            write_report(settings, report)
+            print(f"Report written to {settings.report_path}")
+            if result["errors"]:
+                print("Probe stopped early; see report for the error.", file=sys.stderr)
+                return 1
+            return 0
+        finally:
+            client.close()
+    if args.command == "ingest-daily":
+        try:
+            validate_probe_settings(settings)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        engine = make_engine()
+        session_factory = make_session_factory(engine)
+        client = ApiFootballClient(
+            api_key=settings.api_key or "",
+            base_url=settings.base_url,
+            cache_path=settings.cache_path,
+            cache_ttl_seconds=settings.cache_ttl_seconds,
+            timeout_seconds=settings.timeout_seconds,
+            retries=settings.retries,
+            backoff_seconds=settings.backoff_seconds,
+            requests_per_minute=settings.requests_per_minute,
+            daily_quota_limit=settings.daily_quota_limit,
+        )
+        try:
+            with session_factory() as session:
+                summary = run_daily_ingest(client, session, settings)
+            print(
+                f"Ingested {summary.fixture_count} fixtures, {summary.odds_count} odds snapshots, "
+                f"{summary.market_count} markets, and {summary.context_snapshots} context snapshots "
+                f"across {summary.league_count} leagues; "
+                f"{summary.requests_used} API requests ({summary.cache_hits} cache hits)."
+            )
+            if summary.enrichment_skipped:
+                print(
+                    f"Quota budget deferred {summary.enrichment_skipped} optional request groups."
+                )
+            return 0
+        except Exception as exc:
+            print(f"Daily ingest failed: {exc}", file=sys.stderr)
+            return 1
+        finally:
+            client.close()
+            engine.dispose()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

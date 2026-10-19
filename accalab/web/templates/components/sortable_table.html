@@ -1,0 +1,14 @@
+{% macro sortable_table(columns, rows, default_sort='') -%}
+<div class="table-scroll">
+  <table data-sortable data-default-sort="{{ default_sort }}">
+    <thead><tr>
+      {% for key, label, kind in columns %}
+      <th scope="col" aria-sort="none" data-sort-key="{{ key }}" data-sort-kind="{{ kind }}"><button type="button" class="table-sort">{{ label }} <span aria-hidden="true">↕</span></button></th>
+      {% endfor %}
+    </tr></thead>
+    <tbody>
+      {% for row in rows %}<tr>{% for key, label, kind in columns %}<td data-sort-value="{{ row[key] }}">{{ row[key] }}</td>{% endfor %}</tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{%- endmacro %}

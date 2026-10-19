@@ -1,0 +1,17 @@
+[model]
+max_goals = 10
+time_decay_per_day = 0.003
+minimum_training_matches = 30
+regularization = 0.0001
+
+[evaluation]
+calibration_bins = 10
+
+[eligibility]
+minimum_odds = 1.30
+maximum_odds = 2.20
+minimum_ev = 0.03
+conservative_ev_minimum = 0.0
+overround_reference = 0.05
+overround_edge_scale = 1.0
+probability_z = 1.96

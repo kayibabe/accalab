@@ -1,0 +1,19 @@
+[api]
+base_url = "https://v3.football.api-sports.io"
+timeout_seconds = 20
+retries = 3
+backoff_seconds = 0.5
+requests_per_minute = 300
+daily_quota_limit = 7500
+cache_path = "data/api_cache.sqlite3"
+cache_ttl_seconds = 900
+timezone = "Africa/Blantyre"
+
+[probe]
+future_days = 5
+historical_days = [1, 7, 30, 90]
+report_path = "docs/PHASE0_REPORT.md"
+
+[leagues]
+# Leave empty to discover all current leagues. Set IDs only to restrict scope.
+ids = []
