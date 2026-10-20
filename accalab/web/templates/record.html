@@ -1,0 +1,11 @@
+{% extends "public_base.html" %}
+{% block content %}
+<section class="public-hero compact-hero"><p class="eyebrow">Observed results</p><h1>Live record</h1><p class="hero-copy">Official settled tickets are counted here. Preview tickets are excluded.</p></section>
+<section class="public-section card record-card">
+  <p>Record start: <span class="summary-value">{{ record.start or "Not started" }}</span></p>
+  <p>Settled official tickets: <span class="summary-value">{{ record.tickets }}</span></p>
+  {% if record.roi is not none %}<p>Historical return on stake: <span class="summary-value">{{ "%.1f"|format(record.roi * 100) }}%</span></p><p>Bootstrap 95% interval: {{ "%.1f"|format(record.roi_ci_low * 100) }}% to {{ "%.1f"|format(record.roi_ci_high * 100) }}%</p>{% else %}<p>No return figure is shown until settled official tickets are available.</p>{% endif %}
+  <p class="footnote">{{ record.sample_note }}</p>
+  <p>Past performance describes recorded outcomes only. It does not predict future results or establish an edge.</p>
+</section>
+{% endblock %}

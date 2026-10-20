@@ -33,6 +33,8 @@ def main() -> int:
     )
     admin_parser.add_argument("--email", required=True)
     commands.add_parser("serve", help="Run the AccaLab web application")
+    commands.add_parser("reconcile-payments", help="Verify payments and expire prepaid access")
+    commands.add_parser("send-notifications", help="Queue reminders and deliver due account alerts")
     backtest_parser = commands.add_parser(
         "backtest-model", help="Run the expanding-window model quality evaluation"
     )
@@ -117,6 +119,50 @@ def main() -> int:
         except Exception as exc:
             print(f"Scheduler stopped: {exc}", file=sys.stderr)
             return 1
+    if args.command == "reconcile-payments":
+        from accalab.payments.providers import build_payment_provider
+        from accalab.payments.service import run_payment_maintenance
+
+        engine = make_engine()
+        session_factory = make_session_factory(engine)
+        try:
+            provider = build_payment_provider()
+            with session_factory.begin() as session:
+                result = run_payment_maintenance(session, {provider.name: provider})
+            print(
+                "Payment maintenance: "
+                + ", ".join(f"{key}={value}" for key, value in result.items())
+            )
+            return 0
+        except Exception as exc:
+            print(f"Payment maintenance failed: {exc}", file=sys.stderr)
+            return 1
+        finally:
+            engine.dispose()
+    if args.command == "send-notifications":
+        from accalab.messaging import build_channels, dispatch_outbox, enqueue_expiry_reminders
+
+        engine = make_engine()
+        session_factory = make_session_factory(engine)
+        channels = build_channels()
+        try:
+            with session_factory.begin() as session:
+                reminders = enqueue_expiry_reminders(session)
+                report = dispatch_outbox(session, channels)
+            print(
+                f"Notifications: expiry_reminders_queued={reminders}, "
+                + ", ".join(f"{key}={value}" for key, value in report.items())
+            )
+            return 0
+        except Exception as exc:
+            print(f"Notification delivery failed: {exc}", file=sys.stderr)
+            return 1
+        finally:
+            for channel in channels.values():
+                close = getattr(channel, "close", None)
+                if callable(close):
+                    close()
+            engine.dispose()
     if args.command == "retrain-model":
         from accalab.config import ROOT
         from accalab.modeling.stronger import retrain_and_register
@@ -260,6 +306,10 @@ def main() -> int:
                     client, session, settings, seasons_per_league=args.seasons
                 )
                 settlement = settle_completed_tickets(session)
+                if settlement["tickets_settled"] or settlement["new_results"] or settlement["corrections"]:
+                    from accalab.messaging import enqueue_nightly_results
+
+                    enqueue_nightly_results(session)
                 session.commit()
             print(
                 f"Ingested {summary.fixtures_stored} completed results across "

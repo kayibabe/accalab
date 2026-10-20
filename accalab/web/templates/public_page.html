@@ -1,0 +1,7 @@
+{% extends "public_base.html" %}
+{% block content %}
+<section class="public-hero compact-hero"><p class="eyebrow">AccaLab</p><h1>{{ page.title }}</h1><p class="hero-copy">{{ page.intro }}</p></section>
+<section class="public-section public-copy">
+  {% for heading, body in page.sections %}<article class="public-copy-section"><h2>{{ heading }}</h2><p>{{ body }}</p></article>{% endfor %}
+</section>
+{% endblock %}

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>{{ title }} · AccaLab</title>
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <script defer src="/static/js/app.js"></script>
+</head>
+<body>
+  <header class="public-header">
+    <a class="brand" href="/">AccaLab</a>
+    <nav aria-label="Public navigation">
+      <a href="/how-it-works">How it works</a>
+      <a href="/pricing">Pricing</a>
+      <a href="/record">Record</a>
+      <a href="/login">Sign in</a>
+      <a class="button button-primary" href="/register">{{ "Create free account" if registration_open else "Join the waitlist" }}</a>
+    </nav>
+    <button type="button" class="theme-toggle" data-theme-toggle aria-label="Switch appearance">Switch appearance</button>
+  </header>
+  <main class="public-main">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="public-footer">
+    <nav aria-label="Information">
+      <a href="/responsible-gambling">Responsible gambling</a>
+      <a href="/terms">Terms</a>
+      <a href="/privacy">Privacy</a>
+    </nav>
+    <p>18+ only. Football outcomes are uncertain. AccaLab provides analysis and tracking; it does not place bets.</p>
+  </footer>
+</body>
+</html>

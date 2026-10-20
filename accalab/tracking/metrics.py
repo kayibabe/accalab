@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import random
-from hashlib import sha256
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from hashlib import sha256
+import random
 from statistics import mean
 from zoneinfo import ZoneInfo
 
@@ -24,6 +24,7 @@ from accalab.models import (
     Ticket,
     TicketLeg,
 )
+from accalab.modeling.value import de_vig
 
 SAMPLE_SIZE_NOTE = (
     "For a 5% ROI at about two standard deviations, a rough sample-size guide is "
@@ -233,10 +234,11 @@ def _clv_for_leg(session: Session, row: dict) -> float | None:
     if not quotes:
         return None
     selected = session.get(OddsSnapshot, leg.odds_snapshot_id)
-    quote = next(
-        (item for item in quotes if selected and item.bookmaker_id == selected.bookmaker_id),
-        quotes[0],
-    )
+    if selected is None or selected.bookmaker_id is None:
+        return None
+    quote = next((item for item in quotes if item.bookmaker_id == selected.bookmaker_id), None)
+    if quote is None:
+        return None
     if quote.odds <= 1:
         return None
     return float(leg.odds / quote.odds - Decimal(1))
@@ -287,6 +289,197 @@ def _leg_summary(session: Session, rows: list[dict]) -> dict:
         "clv_ci_low": clv_low,
         "clv_ci_high": clv_high,
         "calibration": calibration,
+    }
+
+
+def _latest_single_results(session: Session, *, as_of: datetime) -> dict[int, SingleResult]:
+    latest: dict[int, SingleResult] = {}
+    for result in session.scalars(
+        select(SingleResult)
+        .where(SingleResult.settled_at <= as_of)
+        .order_by(SingleResult.settled_at, SingleResult.id)
+    ).all():
+        latest[result.single_selection_id] = result
+    return latest
+
+
+def _closing_market_probability(session: Session, row: dict) -> float | None:
+    """Return a proportional de-vig probability from the latest same-book quote set."""
+    fixture, leg = row["fixture"], row["leg"]
+    if fixture is None:
+        return None
+    selected_quote = session.get(OddsSnapshot, leg.odds_snapshot_id)
+    if selected_quote is None or selected_quote.bookmaker_id is None:
+        return None
+    quotes = session.scalars(
+        select(OddsSnapshot)
+        .where(
+            OddsSnapshot.fixture_id == leg.fixture_id,
+            OddsSnapshot.market_id == leg.market_id,
+            OddsSnapshot.line == leg.line,
+            OddsSnapshot.bookmaker_id == selected_quote.bookmaker_id,
+            OddsSnapshot.as_of < fixture.kickoff_at,
+        )
+        .order_by(OddsSnapshot.as_of.desc(), OddsSnapshot.id.desc())
+    ).all()
+    if not quotes:
+        return None
+    closing_at = quotes[0].as_of
+    closing = {quote.selection: float(quote.odds) for quote in quotes if quote.as_of == closing_at}
+    try:
+        return de_vig(closing).fair_probabilities.get(leg.selection)
+    except ValueError:
+        return None
+
+
+def build_prelaunch_report(session: Session, *, as_of: datetime | None = None) -> dict:
+    """Build the Admin-only evidence summary for the proposed launch gate."""
+    as_of = as_of or datetime.now(UTC)
+    results = _latest_single_results(session, as_of=as_of)
+    selections = session.scalars(
+        select(SingleSelection).where(
+            SingleSelection.run_type == "official", SingleSelection.as_of <= as_of
+        )
+    ).all()
+    fixtures: dict[int, Fixture | None] = {}
+    rows = []
+    for selection in selections:
+        result = results.get(selection.id)
+        if result is None:
+            continue
+        fixture = fixtures.get(selection.fixture_id)
+        if selection.fixture_id not in fixtures:
+            fixture = session.get(Fixture, selection.fixture_id)
+            fixtures[selection.fixture_id] = fixture
+        rows.append(
+            {
+                "leg": selection,
+                "result": result,
+                "fixture": fixture,
+                "target_date": selection.target_date,
+            }
+        )
+
+    decisive = [row for row in rows if row["result"].outcome not in NON_DECISIVE]
+    paired_brier = []
+    for row in decisive:
+        market_probability = _closing_market_probability(session, row)
+        if market_probability is not None:
+            observed = _observed_outcome(row["result"].outcome)
+            paired_brier.append(
+                (
+                    (float(row["leg"].probability) - observed) ** 2,
+                    (market_probability - observed) ** 2,
+                )
+            )
+
+    calibration: dict[int, list[dict]] = defaultdict(list)
+    for row in decisive:
+        calibration[min(9, int(float(row["leg"].probability) * 10))].append(row)
+    calibration_rows = []
+    weighted_ece = 0.0
+    for bucket, grouped in sorted(calibration.items()):
+        predicted = mean(float(row["leg"].probability) for row in grouped)
+        observed = mean(_observed_outcome(row["result"].outcome) for row in grouped)
+        weighted_ece += len(grouped) / len(decisive) * abs(predicted - observed) if decisive else 0.0
+        calibration_rows.append(
+            {
+                "bucket": f"{bucket / 10:.0%}–{(bucket + 1) / 10:.0%}",
+                "predicted": f"{predicted:.1%}",
+                "observed": f"{observed:.1%}",
+                "sample": len(grouped),
+                "sample_sort": len(grouped),
+            }
+        )
+
+    clv_values = [
+        value
+        for row in rows
+        if (value := _clv_for_leg(session, row)) is not None
+    ]
+    digest = sha256(f"prelaunch-clv:{len(clv_values)}".encode()).digest()
+    clv_low, clv_high = _bootstrap_mean(
+        clv_values, seed=int.from_bytes(digest[:4], "big")
+    )
+    claimed = [
+        float(row["leg"].probability * row["leg"].odds - Decimal(1)) for row in rows
+    ]
+    realised = [
+        float(row["result"].payout_multiplier - Decimal(1)) for row in rows
+    ]
+    starts = [selection.as_of for selection in selections]
+    tracking_start = min(starts) if starts else None
+    weeks = max(0.0, (as_of - tracking_start).total_seconds() / (7 * 24 * 3600)) if tracking_start else 0.0
+    model_brier = mean([pair[0] for pair in paired_brier]) if paired_brier else None
+    market_brier_score = mean([pair[1] for pair in paired_brier]) if paired_brier else None
+    mean_clv = mean(clv_values) if clv_values else None
+
+    checks = [
+        ("Tracking duration", weeks >= 6, f"{weeks:.1f} weeks", "At least 6 weeks"),
+        ("Settled eligible legs", len(rows) >= 800, str(len(rows)), "At least 800"),
+        (
+            "Calibration error (ECE)",
+            bool(decisive) and weighted_ece <= 0.03,
+            f"{weighted_ece:.3f}" if decisive else "Unavailable",
+            "At most 0.030",
+        ),
+        (
+            "Brier versus de-vigged market",
+            model_brier is not None and market_brier_score is not None and model_brier <= market_brier_score,
+            (
+                f"Model {model_brier:.4f} · market {market_brier_score:.4f}"
+                if model_brier is not None and market_brier_score is not None
+                else "Unavailable"
+            ),
+            "Model no worse; paired sample shown below" if paired_brier else "Comparable market quotes required",
+        ),
+        (
+            "Mean closing-line value",
+            mean_clv is not None and mean_clv > 0 and clv_low is not None,
+            (
+                f"{mean_clv:.2%} · 95% CI {clv_low:.2%} to {clv_high:.2%}"
+                if mean_clv is not None and clv_low is not None and clv_high is not None
+                else "Unavailable"
+            ),
+            "Positive mean; confidence interval displayed",
+        ),
+        (
+            "Claimed versus realised EV",
+            None,
+            "Review required" if rows else "Unavailable",
+            "Document and explain the measured gap before launch",
+        ),
+        ("Job reliability", None, "Unverified", "Reliable scheduled runs; job history is not stored"),
+    ]
+    gate_rows = [
+        {
+            "criterion": label,
+            "measured": measured,
+            "requirement": requirement,
+            "status": "PASS" if passed is True else "NOT MET" if passed is False else "UNVERIFIED",
+        }
+        for label, passed, measured, requirement in checks
+    ]
+    all_passed = all(passed is True for _, passed, _, _ in checks)
+    return {
+        "tracking_start": tracking_start,
+        "weeks": weeks,
+        "settled_legs": len(rows),
+        "decisive_legs": len(decisive),
+        "ece": weighted_ece if decisive else None,
+        "brier": model_brier,
+        "market_brier": market_brier_score,
+        "market_brier_legs": len(paired_brier),
+        "claimed_ev": mean(claimed) if claimed else None,
+        "realised_ev": mean(realised) if realised else None,
+        "clv_legs": len(clv_values),
+        "mean_clv": mean_clv,
+        "clv_ci_low": clv_low,
+        "clv_ci_high": clv_high,
+        "calibration": calibration_rows,
+        "gate_rows": gate_rows,
+        "gate_status": "All measured criteria pass" if all_passed else "Launch gate not met",
+        "gate_ready": all_passed,
     }
 
 

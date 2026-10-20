@@ -1,0 +1,65 @@
+{% extends "public_base.html" %}
+{% block content %}
+<section class="public-hero">
+  <p class="eyebrow">Football analysis and tracking</p>
+  <h1>{{ content.headline }}</h1>
+  <p class="hero-copy">{{ content.promise }}</p>
+  <div class="hero-actions">
+    <a class="button button-primary" href="/register">{{ "Create free account" if registration_open else "Join the waitlist" }}</a>
+    <a class="button" href="/pricing">See Pro</a>
+  </div>
+  <p class="age-note">Adults aged 18 and over. No outcome is guaranteed.</p>
+</section>
+
+<section class="public-section" aria-labelledby="example-title">
+  <div class="section-heading"><p class="eyebrow">A real example</p><h2 id="example-title">{{ example_label or "Ticket example" }}</h2></div>
+  {% if example %}
+  <article class="ticket-card">
+    <div class="ticket-heading"><div><h3>{{ example.band }} · {{ example.target_date }}</h3><p>{{ example.leg_count }} legs · {{ example.status }} · Odds as of {{ example.as_of }}</p></div><div class="ticket-meta"><span>Combined odds</span><span class="summary-value">{{ example.combined_odds }}</span></div></div>
+    {% if example.legs %}
+    <ul class="example-legs">{% for leg in example.legs %}<li><span>{{ leg.fixture }}</span><span>{{ leg.market }} · {{ leg.selection }}{% if leg.line %} {{ leg.line }}{% endif %}</span><span>Odds {{ leg.odds }} · {{ leg.result }}</span></li>{% endfor %}</ul>
+    {% else %}<p class="muted">This ticket has no leg details available.</p>{% endif %}
+  </article>
+  {% else %}<div class="card"><p>No settled ticket from yesterday or published Free sample is available yet.</p></div>{% endif %}
+</section>
+
+<section class="public-section" aria-labelledby="steps-title">
+  <div class="section-heading"><p class="eyebrow">The process</p><h2 id="steps-title">Three steps to review a ticket</h2></div>
+  <div class="public-grid public-grid-three">
+    <article class="card"><span class="step-number">1</span><h3>Review fixtures</h3><p>Start with scheduled matches and the information available for them.</p></article>
+    <article class="card"><span class="step-number">2</span><h3>Compare prices</h3><p>See available odds with their capture time and market details.</p></article>
+    <article class="card"><span class="step-number">3</span><h3>Track outcomes</h3><p>Follow official tickets and settled results as a dated record.</p></article>
+  </div>
+</section>
+
+<section class="public-section" aria-labelledby="record-title">
+  <div class="section-heading"><p class="eyebrow">Observed results</p><h2 id="record-title">Live record</h2></div>
+  <div class="record-card card">
+    <p>Record start: <span class="summary-value">{{ live_record.start or "Not started" }}</span></p>
+    <p>Settled official tickets: <span class="summary-value">{{ live_record.tickets }}</span></p>
+    {% if live_record.roi is not none %}<p>Historical return on stake: <span class="summary-value">{{ "%.1f"|format(live_record.roi * 100) }}%</span> (bootstrap 95% interval {{ "%.1f"|format(live_record.roi_ci_low * 100) }}% to {{ "%.1f"|format(live_record.roi_ci_high * 100) }}%)</p>{% else %}<p>There is not yet enough settled ticket data to report a return figure.</p>{% endif %}
+    <p class="footnote">Observed past results do not predict future outcomes. {{ live_record.sample_note }}</p>
+    <a href="/record">View record details</a>
+  </div>
+</section>
+
+<section class="public-section" aria-labelledby="plans-title">
+  <div class="section-heading"><p class="eyebrow">Plans</p><h2 id="plans-title">Free and Pro</h2></div>
+  <div class="public-grid public-grid-two">
+    {% for plan in plans %}<article class="card plan-card"><div class="plan-heading"><h3>{{ plan.name }}</h3><span class="summary-value">{{ plan.price }}</span></div><p>{{ plan.description }}</p><ul>{% for feature, label in capability_labels.items() %}<li>{{ label }}: {{ "Included" if feature in plan.capabilities else "Not included" }}</li>{% endfor %}</ul><a class="button {{ "button-primary" if plan.name == "Free" else "" }}" href="/register">{{ "Get started" if plan.name == "Free" else "See Pro details" }}</a></article>{% endfor %}
+  </div>
+</section>
+
+<section class="public-section" aria-labelledby="faq-title">
+  <div class="section-heading"><p class="eyebrow">Questions</p><h2 id="faq-title">Frequently asked</h2></div>
+  <details class="public-faq"><summary>Does AccaLab place bets?</summary><p>No. AccaLab provides football analysis and ticket tracking. It does not accept stakes or place bets.</p></details>
+  <details class="public-faq"><summary>Are results a promise of future returns?</summary><p>No. Past outcomes do not predict future results. Every ticket can lose.</p></details>
+  <details class="public-faq"><summary>Who can use AccaLab?</summary><p>The service is for adults aged 18 and over. Check the rules that apply where you live.</p></details>
+</section>
+
+<section class="public-section notice-card" aria-labelledby="notice-title">
+  <h2 id="notice-title">Keep it in perspective</h2>
+  <p>18+ only. Gambling involves risk. Set limits, do not chase losses, and take a break if it stops feeling manageable.</p>
+  <a href="/responsible-gambling">Read the responsible-gambling information</a>
+</section>
+{% endblock %}

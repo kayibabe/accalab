@@ -24,7 +24,9 @@ def _scheduler_config(path: Path | None = None) -> dict:
 
 def run_cli_job(command: str) -> int:
     """Run one of the normal CLI commands with the same environment and repository root."""
-    allowed = {"ingest-daily", "ingest-results", "retrain-model"}
+    allowed = {
+        "ingest-daily", "ingest-results", "retrain-model", "reconcile-payments", "send-notifications"
+    }
     if command not in allowed:
         raise ValueError(f"Unsupported scheduled job: {command}")
     logger.info("Starting scheduled AccaLab job: %s", command)
@@ -75,6 +77,23 @@ def build_scheduler(config_path: Path | None = None) -> BackgroundScheduler:
         hour=int(config["weekly_retrain_hour"]),
         minute=0,
         misfire_grace_time=6 * 3600,
+    )
+    scheduler.add_job(
+        run_cli_job,
+        "cron",
+        id="daily-payment-reconciliation",
+        args=["reconcile-payments"],
+        hour=int(config["payments_reconcile_hour"]),
+        minute=0,
+        misfire_grace_time=3600,
+    )
+    scheduler.add_job(
+        run_cli_job,
+        "interval",
+        id="notification-outbox",
+        args=["send-notifications"],
+        minutes=max(1, int(config.get("notifications_interval_minutes", 5))),
+        misfire_grace_time=300,
     )
     return scheduler
 

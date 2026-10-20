@@ -1,0 +1,17 @@
+{
+  "registration_open": false,
+  "headline": "Football analysis, made clear.",
+  "promise": "Review fixtures, compare available odds and follow a transparent record of accumulator tickets.",
+  "plans": {
+    "free": {
+      "price_mwk": 0,
+      "billing_period": "",
+      "description": "A limited view of today's fixtures, recent settled tickets, headline performance and learning pages."
+    },
+    "pro": {
+      "price_mwk": null,
+      "billing_period": "30 days",
+      "description": "Full ticket and selection details, probabilities, value measures, history, performance and exports."
+    }
+  }
+}

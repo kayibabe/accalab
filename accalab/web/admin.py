@@ -17,13 +17,16 @@ from accalab.models import (
     DataSnapshot,
     Fixture,
     MarketRegistry,
+    MessageConsent,
+    MessageOutbox,
     ModelVersion,
     OddsSnapshot,
+    Payment,
     Prediction,
-    Result,
-    SingleResult,
     User,
 )
+from accalab.tracking.metrics import build_prelaunch_report
+from accalab.web.public import load_site_content
 
 
 def _count(session: Session, model) -> int:
@@ -285,15 +288,52 @@ def _admin_data(session: Session, key: str) -> dict:
         }
 
     if key == "backtests-and-pre-launch-tracking":
+        report = build_prelaunch_report(session)
+        start = report["tracking_start"]
+        report["tracking_start_display"] = _when(start)
+        report["brier_display"] = f"{report['brier']:.4f}" if report["brier"] is not None else "—"
+        report["market_brier_display"] = (
+            f"{report['market_brier']:.4f}" if report["market_brier"] is not None else "—"
+        )
+        report["ece_display"] = f"{report['ece']:.3f}" if report["ece"] is not None else "—"
+        report["claimed_ev_display"] = (
+            f"{report['claimed_ev']:.2%}" if report["claimed_ev"] is not None else "—"
+        )
+        report["realised_ev_display"] = (
+            f"{report['realised_ev']:.2%}" if report["realised_ev"] is not None else "—"
+        )
+        report["ev_gap_display"] = (
+            f"{report['realised_ev'] - report['claimed_ev']:+.2%}"
+            if report["claimed_ev"] is not None and report["realised_ev"] is not None
+            else "—"
+        )
+        report["clv_display"] = (
+            f"{report['mean_clv']:.2%} · 95% CI {report['clv_ci_low']:.2%} to {report['clv_ci_high']:.2%}"
+            if report["mean_clv"] is not None and report["clv_ci_low"] is not None
+            else "—"
+        )
         return {
             "cards": [
-                ("Settled ticket legs", _count(session, Result)),
-                ("Settled singles", _count(session, SingleResult)),
-                ("Model versions", _count(session, ModelVersion)),
+                ("Tracking began", report["tracking_start_display"]),
+                ("Weeks run", f"{report['weeks']:.1f}"),
+                ("Settled eligible legs", report["settled_legs"]),
+                ("Launch gate", report["gate_status"]),
             ],
-            "columns": [],
-            "rows": [],
-            "note": "Pre-launch gate metrics are not yet assembled in this phase. The launch gate screens out a broken system; it cannot prove an edge.",
+            "columns": [
+                ("criterion", "Gate criterion", "text"),
+                ("measured", "Current evidence", "text"),
+                ("requirement", "Requirement", "text"),
+                ("status", "Status", "text"),
+            ],
+            "rows": report["gate_rows"],
+            "prelaunch": report,
+            "note": (
+                "This proposed gate screens out a broken system; it cannot prove an edge, which needs thousands of legs. "
+                "Eligible legs are official single selections with their latest settlement correction. The market baseline "
+                "uses the selected bookmaker's latest pre-kickoff multi-selection quote set and proportional de-vigging. "
+                "The claimed-versus-realised EV explanation is not recorded in the app and requires review. "
+                "Job reliability is unverified because scheduled job-run history is not persisted."
+            ),
         }
 
     if key == "builder-and-thresholds":
@@ -388,23 +428,162 @@ def _admin_data(session: Session, key: str) -> dict:
         plans = []
         for role, entitlements in ROLE_ENTITLEMENTS.items():
             plans.append({"role": role.title(), "access": ", ".join(sorted(entitlements))})
+        content = load_site_content()
+        pro_price = content["plans"]["pro"].get("price_mwk")
         return {
             "cards": [
-                ("Registration", "Not configured"),
-                ("Plan prices", "Not configured"),
+                ("Registration", "Open" if content["registration_open"] else "Closed"),
+                ("Pro price", f"MWK {int(pro_price):,}" if pro_price else "Not set"),
                 ("Plan tiers", len(plans)),
             ],
             "columns": [("role", "Role", "text"), ("access", "Current entitlement keys", "text")],
             "rows": plans,
-            "note": "Landing copy, registration and prices are not configured yet; the public pages and editable content are Task 11.",
+            "note": "Public copy and plan pricing are loaded from config/site_content.json. Registration remains controlled by the registration_open setting.",
+            "site_content": content,
         }
 
-    if key in {"messaging", "payments"}:
+    if key == "payments":
+        rows = _rows(
+            session,
+            select(
+                Payment.id.label("id"),
+                Payment.provider.label("provider"),
+                Payment.tx_ref.label("transaction"),
+                Payment.manual_reference.label("manual_reference"),
+                Payment.amount_mwk.label("amount_sort"),
+                Payment.status.label("status"),
+                Payment.created_at.label("created_sort"),
+            ).order_by(Payment.created_at.desc(), Payment.id.desc()).limit(200),
+        )
+        for row in rows:
+            row["amount"] = f"MWK {int(row.pop('amount_sort')):,}"
+            row["created"] = _when(row.pop("created_sort"))
+        pending_manual = session.scalars(
+            select(Payment)
+            .where(Payment.provider == "manual", Payment.status == "pending")
+            .order_by(Payment.created_at)
+            .limit(100)
+        ).all()
+        pending_count = int(
+            session.scalar(select(func.count()).select_from(Payment).where(Payment.status == "pending")) or 0
+        )
+        paid_count = int(
+            session.scalar(select(func.count()).select_from(Payment).where(Payment.status == "succeeded")) or 0
+        )
         return {
-            "cards": [("Status", "Not configured"), ("Records", "0")],
-            "columns": [],
-            "rows": [],
-            "note": "This section is reserved for the upcoming messaging and payments tasks.",
+            "cards": [
+                ("Payments", _count(session, Payment)),
+                ("Pending", pending_count),
+                ("Paid", paid_count),
+            ],
+            "columns": [
+                ("provider", "Provider", "text"),
+                ("transaction", "Transaction", "text"),
+                ("manual_reference", "Manual reference", "text"),
+                ("amount", "Amount", "text"),
+                ("status", "Status", "text"),
+                ("created", "Created", "text"),
+            ],
+            "rows": rows,
+            "pending_manual": [
+                {"id": item.id, "tx_ref": item.tx_ref, "amount": f"MWK {item.amount_mwk:,}"}
+                for item in pending_manual
+            ],
+            "note": "Payment references and status are retained for reconciliation. AccaLab does not store card numbers or mobile money PINs.",
+        }
+
+    if key == "messaging":
+        cfg = _read_toml("messaging.toml").get("whatsapp", {})
+        statuses = _rows(
+            session,
+            select(
+                MessageOutbox.channel.label("channel"),
+                MessageOutbox.event_type.label("event"),
+                MessageOutbox.status.label("status"),
+                MessageOutbox.whatsapp_status.label("delivery_status"),
+                MessageOutbox.template_name.label("template"),
+                MessageOutbox.estimated_cost_usd.label("cost_sort"),
+                MessageOutbox.delivered_at.label("delivered_at"),
+            )
+            .order_by(MessageOutbox.created_at.desc(), MessageOutbox.id.desc())
+            .limit(100),
+        )
+        for row in statuses:
+            row["cost"] = (
+                f"USD {float(row['cost_sort']):.4f}"
+                if row["delivered_at"] is not None and row["cost_sort"] is not None
+                else "—"
+            )
+            row["cost_sort"] = str(row["cost_sort"] or "")
+            row["delivered_at"] = _when(row["delivered_at"])
+        enabled_consents = dict(
+            session.execute(
+                select(MessageConsent.channel, func.count())
+                .where(
+                    MessageConsent.consented_at.is_not(None),
+                    MessageConsent.stopped_at.is_(None),
+                    MessageConsent.destination.is_not(None),
+                )
+                .group_by(MessageConsent.channel)
+            ).all()
+        )
+        delivered = int(
+            session.scalar(
+                select(func.count()).select_from(MessageOutbox).where(
+                    MessageOutbox.channel == "whatsapp", MessageOutbox.delivered_at.is_not(None)
+                )
+            )
+            or 0
+        )
+        estimated = session.scalar(
+            select(func.sum(MessageOutbox.estimated_cost_usd)).where(
+                MessageOutbox.channel == "whatsapp", MessageOutbox.delivered_at.is_not(None)
+            )
+        )
+        dead_letters = int(
+            session.scalar(
+                select(func.count()).select_from(MessageOutbox).where(
+                    MessageOutbox.status == "dead_letter"
+                )
+            )
+            or 0
+        )
+        templates = [
+            {
+                "event": event,
+                "name": item.get("name", "—"),
+                "category": item.get("category", "—"),
+                "approval": item.get("approval_status", "unknown").title(),
+            }
+            for event, item in cfg.get("templates", {}).items()
+        ]
+        cost_label = f"USD {float(estimated):.4f}" if estimated is not None else "Rate not configured"
+        return {
+            "cards": [
+                ("WhatsApp", "Enabled" if cfg.get("whatsapp_enabled") else "Disabled"),
+                ("Delivered templates", delivered),
+                ("Estimated WhatsApp cost", cost_label),
+                ("Dead-letter messages", dead_letters),
+            ],
+            "columns": [
+                ("channel", "Channel", "text"),
+                ("event", "Event", "text"),
+                ("status", "Queue status", "text"),
+                ("delivery_status", "Provider status", "text"),
+                ("template", "Template", "text"),
+                ("cost", "Estimated cost", "text"),
+                ("delivered_at", "Delivered", "date"),
+            ],
+            "rows": statuses,
+            "message_templates": templates,
+            "note": (
+                f"Active opt-ins — Telegram: {enabled_consents.get('telegram', 0)}, "
+                f"email: {enabled_consents.get('email', 0)}, "
+                f"WhatsApp: {enabled_consents.get('whatsapp', 0)}. "
+                "WhatsApp stays disabled unless Meta policy approval, country eligibility, "
+                "approved templates, consent, and current template cost estimates are configured. "
+                "Cost is estimated from delivered templates; provider billing may differ."
+            ),
         }
 
     return {"cards": [], "columns": [], "rows": [], "note": "No data is available."}
@@ -425,4 +604,8 @@ def build_admin_page_context(session: Session, section: str) -> dict:
         "note": data["note"],
         "has_table": bool(data["columns"]),
         "title": item.label,
+        "site_content": data.get("site_content"),
+        "pending_manual": data.get("pending_manual", []),
+        "message_templates": data.get("message_templates", []),
+        "prelaunch": data.get("prelaunch"),
     }

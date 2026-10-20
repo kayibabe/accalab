@@ -1,0 +1,8 @@
+{% extends "public_base.html" %}
+{% block content %}
+<section class="public-hero compact-hero"><p class="eyebrow">Plans</p><h1>Pricing</h1><p class="hero-copy">Clear access levels for football fixtures, analysis and ticket tracking.</p></section>
+<section class="public-section public-grid public-grid-two">
+{% for plan in plans %}<article class="card plan-card"><div class="plan-heading"><h2>{{ plan.name }}</h2><span class="summary-value">{{ plan.price }}</span></div><p>{{ plan.description }}</p><ul>{% for feature, label in capability_labels.items() %}<li>{{ label }}: {{ "Included" if feature in plan.capabilities else "Not included" }}</li>{% endfor %}</ul><a class="button {{ "button-primary" if plan.name == "Free" else "" }}" href="/register">{{ "Create free account" if plan.name == "Free" else "Join the waitlist" }}</a></article>{% endfor %}
+</section>
+<p class="footnote">Pro pricing is displayed in MWK and is set by the service operator. No auto-renewing payment is offered on this page.</p>
+{% endblock %}

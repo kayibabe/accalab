@@ -1,0 +1,11 @@
+{
+  "status": "success",
+  "message": "Transaction verified",
+  "data": {
+    "tx_ref": "ACCA-1",
+    "status": "success",
+    "currency": "MWK",
+    "amount": 12000,
+    "reference": "PC-EXAMPLE-1"
+  }
+}

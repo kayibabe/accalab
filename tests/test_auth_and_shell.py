@@ -26,10 +26,12 @@ from accalab.config import load_settings
 from accalab.models import (
     AuthToken,
     AgentLog,
+    AuditLog,
     Fixture,
     FreeWeeklySample,
     MarketRegistry,
     OddsSnapshot,
+    Payment,
     Team,
     Ticket,
     TicketLeg,
@@ -114,6 +116,18 @@ def test_admin_agent_view_uses_summary_and_never_renders_call_payloads():
     assert "DO NOT SHOW INPUT" not in response.text
     assert "DO NOT SHOW OUTPUT" not in response.text
     assert "data-sortable" in response.text
+    engine.dispose()
+
+
+def test_admin_prelaunch_page_renders_gate_and_evidence_summary():
+    client, _factory, engine = _client_for_role("admin")
+    response = client.get("/admin/backtests-and-pre-launch-tracking")
+    assert response.status_code == 200
+    assert "Launch gate not met" in response.text
+    assert "Settled eligible legs" in response.text
+    assert "Brier versus de-vigged market" in response.text
+    assert "Job reliability" in response.text
+    assert "cannot establish an edge" in response.text
     engine.dispose()
 
 
@@ -320,3 +334,46 @@ def test_shared_sortable_table_and_template_copy_rules():
         ), template
     css = (root.parent / "static" / "css" / "tokens.css").read_text(encoding="utf-8")
     assert re.findall(r"font-weight\s*:\s*600", css) == ["font-weight: 600"]
+
+
+def test_admin_manual_payment_action_is_guarded_and_audited():
+    client, factory, engine = _client_for_role("admin")
+    with factory.begin() as session:
+        user = session.query(User).filter_by(email="free@example.com").one_or_none()
+        if user is None:
+            user = session.query(User).filter_by(email="admin@example.com").one()
+        payment = Payment(
+            id="manual-payment-1",
+            user_id=user.id,
+            provider="manual",
+            tx_ref="ACCA-MANUAL-1",
+            amount_mwk=12000,
+            currency="MWK",
+            status="pending",
+        )
+        session.add(payment)
+    page = client.get("/admin/payments")
+    token = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
+    response = client.post(
+        "/admin/payments/manual-payment-1/mark-paid",
+        data={"csrf_token": token, "reference": "MPAMBA-1"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    with factory() as session:
+        payment = session.get(Payment, "manual-payment-1")
+        assert payment.status == "succeeded"
+        assert payment.manual_reference == "MPAMBA-1"
+        audit = session.query(AuditLog).filter_by(action="mark_manual_payment_paid").one()
+        assert audit.target_id == payment.id
+
+    free_client, _free_factory, free_engine = _client_for_role("free")
+    free_page = free_client.get("/app/account")
+    free_token = re.search(r'name="csrf_token" value="([^"]+)"', free_page.text).group(1)
+    denied = free_client.post(
+        "/admin/payments/manual-payment-1/mark-paid",
+        data={"csrf_token": free_token, "reference": "MPAMBA-2"},
+    )
+    assert denied.status_code == 403
+    free_engine.dispose()
+    engine.dispose()

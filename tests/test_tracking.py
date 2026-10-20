@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
+import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
@@ -14,12 +15,13 @@ from accalab.models import (
     MarketRegistry,
     OddsSnapshot,
     Result,
+    SingleResult,
     SingleSelection,
     Team,
     Ticket,
     TicketLeg,
 )
-from accalab.tracking.metrics import build_performance_report
+from accalab.tracking.metrics import build_performance_report, build_prelaunch_report
 from accalab.tracking.sample import select_weekly_sample
 from accalab.tracking.settlement import settle_completed_tickets, settle_ticket
 
@@ -280,6 +282,109 @@ def test_performance_report_excludes_previews_and_includes_singles_and_ci() -> N
     assert report["legs"]["clv_legs"] == 2
     assert report["by_day"][0]["roi_display"].endswith("%")
     assert "1,600" in report["sample_size_note"]
+    session.close()
+    engine.dispose()
+
+
+def test_prelaunch_report_uses_paired_closing_market_scores_and_latest_evidence() -> None:
+    engine, session = _database()
+    _seed_market(session)
+    kickoff = datetime(2026, 8, 1, 12, tzinfo=UTC)
+    _seed_fixture(
+        session,
+        fixture_id=25,
+        home_id=50,
+        away_id=51,
+        kickoff=kickoff,
+        home_goals=1,
+        away_goals=0,
+        status="FT",
+    )
+    selected_at = kickoff - timedelta(hours=4)
+    closing_at = kickoff - timedelta(minutes=2)
+    session.add_all(
+        [
+            OddsSnapshot(
+                fixture_id=25,
+                bookmaker_id=8,
+                bookmaker_name="Book",
+                market_id=1,
+                market_name="Match Winner",
+                selection="Home",
+                odds=Decimal("2.20"),
+                as_of=selected_at,
+                raw={},
+            ),
+            OddsSnapshot(
+                fixture_id=25,
+                bookmaker_id=8,
+                bookmaker_name="Book",
+                market_id=1,
+                market_name="Match Winner",
+                selection="Home",
+                odds=Decimal("2.00"),
+                as_of=closing_at,
+                raw={},
+            ),
+            OddsSnapshot(
+                fixture_id=25,
+                bookmaker_id=8,
+                bookmaker_name="Book",
+                market_id=1,
+                market_name="Match Winner",
+                selection="Away",
+                odds=Decimal("4.00"),
+                as_of=closing_at,
+                raw={},
+            ),
+        ]
+    )
+    session.flush()
+    selected_quote = session.scalar(
+        select(OddsSnapshot).where(
+            OddsSnapshot.fixture_id == 25,
+            OddsSnapshot.selection == "Home",
+            OddsSnapshot.as_of == selected_at,
+        )
+    )
+    selection = SingleSelection(
+        target_date=kickoff.date(),
+        run_type="official",
+        fixture_id=25,
+        market_id=1,
+        selection="Home",
+        line=None,
+        odds_snapshot_id=selected_quote.id,
+        odds=Decimal("2.20"),
+        probability=Decimal("0.70"),
+        p_low=Decimal("0.65"),
+        as_of=selected_at,
+        why="Test selection.",
+    )
+    session.add(selection)
+    session.flush()
+    session.add(
+        SingleResult(
+            single_selection_id=selection.id,
+            outcome="win",
+            payout_multiplier=Decimal("2.20"),
+            settled_at=kickoff + timedelta(hours=2),
+        )
+    )
+    as_of = datetime(2026, 10, 1, tzinfo=UTC)
+    session.flush()
+
+    report = build_prelaunch_report(session, as_of=as_of)
+    assert report["settled_legs"] == 1
+    assert report["market_brier_legs"] == 1
+    assert report["brier"] == pytest.approx(0.09)
+    assert report["market_brier"] == pytest.approx((2 / 3 - 1) ** 2)
+    assert report["mean_clv"] == pytest.approx(0.10)
+    assert report["clv_ci_low"] == pytest.approx(0.10)
+    assert report["claimed_ev"] == pytest.approx(0.54)
+    assert report["realised_ev"] == pytest.approx(1.20)
+    assert report["gate_status"] == "Launch gate not met"
+    assert any(row["status"] == "UNVERIFIED" for row in report["gate_rows"])
     session.close()
     engine.dispose()
 

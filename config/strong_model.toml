@@ -18,3 +18,5 @@ daily_ingest_hour = 5
 results_ingest_hour = 2
 weekly_retrain_day = "sun"
 weekly_retrain_hour = 3
+payments_reconcile_hour = 4
+notifications_interval_minutes = 5

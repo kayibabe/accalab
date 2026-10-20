@@ -36,9 +36,18 @@ def test_migration_creates_schema_with_append_only_snapshot_triggers(
         "data_snapshots",
         "auth_tokens",
         "login_rate_limits",
+        "waitlist_entries",
+        "payments",
+        "subscriptions",
+        "message_consents",
+        "message_outbox",
         "alembic_version",
     } <= tables
     assert "session_version" in {column["name"] for column in inspect(engine).get_columns("users")}
+    consent_columns = {column["name"] for column in inspect(engine).get_columns("message_consents")}
+    assert {"age_confirmed", "verification_attempts", "link_token_hash", "stopped_at"} <= consent_columns
+    outbox_columns = {column["name"] for column in inspect(engine).get_columns("message_outbox")}
+    assert {"template_name", "template_category", "whatsapp_status", "estimated_cost_usd", "delivered_at"} <= outbox_columns
     agent_columns = {column["name"] for column in inspect(engine).get_columns("agent_logs")}
     assert {
         "prediction_id",

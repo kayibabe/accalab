@@ -342,6 +342,118 @@ class LoginRateLimit(Base):
     locked_until: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
 
+class WaitlistEntry(Base):
+    """An email address submitted with explicit consent to hear about launch."""
+
+    __tablename__ = "waitlist_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True, index=True)
+    consented_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=utc_now)
+
+
+class Payment(Base):
+    """A prepaid plan payment; provider payloads are deliberately not retained."""
+
+    __tablename__ = "payments"
+    __table_args__ = (
+        UniqueConstraint("tx_ref", name="uq_payments_tx_ref"),
+        Index("ix_payments_status_created", "status", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    provider: Mapped[str] = mapped_column(String(24), nullable=False)
+    tx_ref: Mapped[str] = mapped_column(String(80), nullable=False)
+    provider_reference: Mapped[str | None] = mapped_column(String(100))
+    manual_reference: Mapped[str | None] = mapped_column(String(120), unique=True)
+    amount_mwk: Mapped[int] = mapped_column(Integer, nullable=False)
+    paid_amount_mwk: Mapped[int | None] = mapped_column(Integer)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="MWK")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    checkout_url: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=utc_now)
+    paid_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+
+
+class Subscription(Base):
+    """Append-only payment-backed prepaid access period and grace window."""
+
+    __tablename__ = "subscriptions"
+    __table_args__ = (
+        UniqueConstraint("payment_id", name="uq_subscriptions_payment_id"),
+        Index("ix_subscriptions_user_status_ends", "user_id", "status", "ends_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    payment_id: Mapped[str] = mapped_column(ForeignKey("payments.id"), nullable=False)
+    plan: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    starts_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    ends_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    grace_ends_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=utc_now)
+
+
+class MessageConsent(Base):
+    """Per-user messaging consent and Telegram destination, including STOP state."""
+
+    __tablename__ = "message_consents"
+    __table_args__ = (
+        UniqueConstraint("user_id", "channel", name="uq_message_consent_user_channel"),
+        UniqueConstraint("channel", "destination", name="uq_message_consent_channel_destination"),
+        Index("ix_message_consents_channel_destination", "channel", "destination"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    channel: Mapped[str] = mapped_column(String(24), nullable=False)
+    destination: Mapped[str | None] = mapped_column(String(160))
+    consented_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    stopped_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    link_token_hash: Mapped[str | None] = mapped_column(String(64), unique=True)
+    link_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    tickets_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    results_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    expiry_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    age_confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    verification_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=utc_now)
+
+
+class MessageOutbox(Base):
+    """Idempotent message delivery queue with retry and dead-letter state."""
+
+    __tablename__ = "message_outbox"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_message_outbox_idempotency"),
+        Index("ix_message_outbox_status_next_attempt", "status", "next_attempt_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    channel: Mapped[str] = mapped_column(String(24), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    message_text: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_attempt_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=utc_now)
+    provider_message_id: Mapped[str | None] = mapped_column(String(160))
+    template_name: Mapped[str | None] = mapped_column(String(100))
+    template_category: Mapped[str | None] = mapped_column(String(32))
+    whatsapp_status: Mapped[str | None] = mapped_column(String(24))
+    estimated_cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 6))
+    delivered_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    last_error: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=utc_now)
+    sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+
+
 class AuditLog(Base):
     __tablename__ = "audit_log"
 

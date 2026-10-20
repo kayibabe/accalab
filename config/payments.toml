@@ -1,0 +1,8 @@
+[subscription]
+period_days = 30
+grace_days = 5
+pending_reconcile_minutes = 30
+pending_expire_hours = 24
+
+[manual]
+instructions = "Use the payment instructions provided by the service operator and include the payment reference."

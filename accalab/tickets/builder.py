@@ -397,6 +397,10 @@ def persist_build(session: Session, result: BuildResult) -> list[Ticket]:
             as_of=result.as_of,
         )
         session.add(ticket)
+        if result.run_type == "official":
+            from accalab.messaging import enqueue_ticket_published
+
+            enqueue_ticket_published(session, ticket_id)
         for leg in built.legs:
             session.add(
                 TicketLeg(

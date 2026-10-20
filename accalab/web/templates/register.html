@@ -1,0 +1,10 @@
+{% extends "public_base.html" %}
+{% block content %}
+<section class="public-hero compact-hero"><p class="eyebrow">AccaLab access</p><h1>{{ "Create an account" if registration_open else "Join the waitlist" }}</h1>
+{% if success %}<p class="hero-copy" role="status">{{ success }}</p>{% elif error %}<p class="message error" role="alert">{{ error }}</p>{% endif %}
+{% if not registration_open and not success %}
+<p class="hero-copy">Registration is currently closed. Leave your email if you would like to hear when access opens.</p>
+<form method="post" action="/register" class="card form-stack public-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label for="waitlist-email">Email</label><input id="waitlist-email" name="email" type="email" maxlength="320" autocomplete="email" required><label class="consent-line"><input type="checkbox" name="consent" value="yes" required> I agree to receive an email about AccaLab access.</label><button class="button button-primary" type="submit">Join the waitlist</button></form>
+{% elif registration_open %}<p class="hero-copy">Account setup is not available yet. Please contact support to request access.</p>{% endif %}
+</section>
+{% endblock %}

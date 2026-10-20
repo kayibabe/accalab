@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% from "components/sortable_table.html" import sortable_table %}
+{% block content %}
+<section class="page-section" aria-label="Account settings">
+  <nav class="account-tabs" aria-label="Account sections">
+    <a href="#profile">Profile</a><a href="#plan">Plan and billing</a><a href="#notifications">Notifications</a><a href="#display">Display</a>
+  </nav>
+  <section id="profile" class="card"><h2>Profile</h2><p>{{ user.email }}</p></section>
+  <section id="plan" class="card">
+    <h2>Plan and billing</h2>
+    <p>Current plan: {{ plan }} · Access until {{ plan_end }}</p>
+    <p>Plans are prepaid for a fixed period. Payments do not renew automatically.</p>
+    {% if error %}<p class="message error" role="alert">{{ error }}</p>{% endif %}
+    {% if payment_state == 'pending' %}<p class="message">Payment request recorded. {{ manual_instructions }}</p>{% endif %}
+    {% if payment_state == 'returned' %}<p class="message">Payment status is being checked. Refresh this page shortly to see the result.</p>{% endif %}
+    {% if user.role != 'admin' %}
+      {% if pro_price %}<p>Pro: MWK {{ "{:,}".format(pro_price) }} for a prepaid {{ period_days }}-day period.</p>{% else %}<p>Pro pricing has not been set yet.</p>{% endif %}
+      <form method="post" action="/app/account/plan">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="button button-primary" type="submit" {% if not pro_price %}disabled{% endif %}>Continue to Pro payment</button>
+      </form>
+    {% endif %}
+  </section>
+  <section class="card"><h2>Payment history</h2>
+    {% if payments %}
+      {{ sortable_table([('date', 'Date', 'text'), ('amount', 'Amount', 'text'), ('provider', 'Provider', 'text'), ('status', 'Status', 'text'), ('reference', 'Reference', 'text')], payments, default_sort='date') }}
+    {% else %}<p>No payment records yet.</p>{% endif %}
+  </section>
+  <section id="notifications" class="card">
+    <h2>Notifications</h2>
+    {% if notification_error %}<p class="message error" role="alert">{{ notification_error }}</p>{% endif %}
+    {% if notification_state == 'stopped' %}<p class="message">Telegram alerts are stopped.</p>{% endif %}
+    {% if user.role == 'free' %}
+      <p>Telegram alerts are available on Pro. Free accounts do not receive alerts.</p>
+    {% else %}
+      {% if telegram_linked %}
+        <p>Telegram is connected. Send <code>/stop</code> to the bot or use this control to stop alerts.</p>
+        <form method="post" action="/app/account/notifications/telegram/stop">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button class="button" type="submit">Stop Telegram alerts</button>
+        </form>
+      {% else %}
+        <p>Connect Telegram to choose which account alerts you receive.</p>
+      {% endif %}
+      <form method="post" action="/app/account/notifications/telegram/link">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <fieldset>
+          <legend>Choose alerts</legend>
+          <label><input type="checkbox" name="tickets_enabled" value="true"> Official tickets published</label>
+          <label><input type="checkbox" name="results_enabled" value="true"> Nightly results</label>
+          <label><input type="checkbox" name="expiry_enabled" value="true"> Pro access expiry reminders</label>
+        </fieldset>
+        <label><input type="checkbox" name="consent_confirm" value="true" required>
+          I agree to receive the selected alerts on Telegram. I can stop them at any time.</label>
+        <button class="button button-primary" type="submit">{% if telegram_linked %}Update alerts{% else %}Connect Telegram{% endif %}</button>
+      </form>
+      <hr>
+      <h3>Email alerts</h3>
+      {% if email_linked %}
+        <p>Email alerts are connected to your verified account address.</p>
+        <form method="post" action="/app/account/notifications/email/stop">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button class="button" type="submit">Stop email alerts</button>
+        </form>
+      {% else %}
+        <form method="post" action="/app/account/notifications/email" class="form-stack">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <p>Alerts will go to your verified address: {{ user.email }}</p>
+          <label><input type="checkbox" name="tickets_enabled" value="true"> Official tickets published</label>
+          <label><input type="checkbox" name="results_enabled" value="true"> Nightly results</label>
+          <label><input type="checkbox" name="expiry_enabled" value="true"> Pro access expiry reminders</label>
+          <label><input type="checkbox" name="consent_confirm" value="true" required> I agree to receive the selected alerts by email.</label>
+          <button class="button button-primary" type="submit">Enable email alerts</button>
+        </form>
+      {% endif %}
+      <hr>
+      <h3>WhatsApp</h3>
+      {% if whatsapp_linked %}
+        <p>WhatsApp is connected. Send STOP to end these alerts.</p>
+        <form method="post" action="/app/account/notifications/whatsapp/stop">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button class="button" type="submit">Stop WhatsApp alerts</button>
+        </form>
+      {% elif whatsapp_enabled %}
+        {% if whatsapp_state == 'code-sent' %}<p class="message">A verification code was sent. Enter it to complete setup.</p>{% endif %}
+        {% if whatsapp_pending %}
+          <form method="post" action="/app/account/notifications/whatsapp/verify" class="form-stack">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <label for="whatsapp-code">One-time code</label><input id="whatsapp-code" name="code" inputmode="numeric" pattern="[0-9]{6}" required>
+            <button class="button button-primary" type="submit">Verify number</button>
+          </form>
+        {% else %}
+          <form method="post" action="/app/account/notifications/whatsapp/request-code" class="form-stack">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <label for="whatsapp-phone">WhatsApp number in international format</label><input id="whatsapp-phone" name="phone" type="tel" placeholder="+14155552671" required>
+            <label><input type="checkbox" name="tickets_enabled" value="true"> Official tickets published</label>
+            <label><input type="checkbox" name="results_enabled" value="true"> Nightly results</label>
+            <label><input type="checkbox" name="expiry_enabled" value="true"> Pro access expiry reminders</label>
+            <label><input type="checkbox" name="age_confirmed" value="true" required> I confirm I am 18 or older.</label>
+            <label><input type="checkbox" name="consent_confirm" value="true" required> I agree to receive the selected WhatsApp alerts and can stop them at any time.</label>
+            <button class="button button-primary" type="submit">Verify WhatsApp number</button>
+          </form>
+        {% endif %}
+      {% else %}
+        {% if whatsapp_pending %}
+          <p>A WhatsApp verification is pending.</p>
+          <form method="post" action="/app/account/notifications/whatsapp/verify" class="form-stack">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <label for="whatsapp-code">One-time code</label><input id="whatsapp-code" name="code" inputmode="numeric" pattern="[0-9]{6}" required>
+            <button class="button button-primary" type="submit">Verify number</button>
+          </form>
+        {% else %}
+          <p>WhatsApp alerts are disabled while policy and country eligibility are reviewed.</p>
+        {% endif %}
+      {% endif %}
+    {% endif %}
+  </section>
+  <section id="display" class="card"><h2>Display</h2><label for="text-size">Text size</label>
+    <select id="text-size" data-text-size><option value="100">100 percent</option><option value="115">115 percent</option><option value="130">130 percent</option></select>
+  </section>
+</section>
+{% endblock %}

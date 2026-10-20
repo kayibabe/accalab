@@ -1,0 +1,60 @@
+[whatsapp]
+# Keep disabled until the WhatsApp Business Platform use is confirmed eligible.
+whatsapp_enabled = false
+policy_approved = false
+fallback_channels = ["telegram", "email"]
+allowed_online_gambling_countries = ["AU", "JP", "CO", "MX", "PE"]
+
+# Populate with current Meta pricing before enabling delivery. No default rate is assumed.
+[whatsapp.cost_estimates_usd.AU]
+UTILITY = "unset"
+AUTHENTICATION = "unset"
+MARKETING = "unset"
+
+[whatsapp.cost_estimates_usd.JP]
+UTILITY = "unset"
+AUTHENTICATION = "unset"
+MARKETING = "unset"
+
+[whatsapp.cost_estimates_usd.CO]
+UTILITY = "unset"
+AUTHENTICATION = "unset"
+MARKETING = "unset"
+
+[whatsapp.cost_estimates_usd.MX]
+UTILITY = "unset"
+AUTHENTICATION = "unset"
+MARKETING = "unset"
+
+[whatsapp.cost_estimates_usd.PE]
+UTILITY = "unset"
+AUTHENTICATION = "unset"
+MARKETING = "unset"
+
+[whatsapp.templates.ticket_published]
+name = "accalab_ticket_update"
+category = "UTILITY"
+approval_status = "pending"
+language = "en"
+body_parameters = ["event_update", "responsible_gambling_notice"]
+
+[whatsapp.templates.nightly_results]
+name = "accalab_results_update"
+category = "UTILITY"
+approval_status = "pending"
+language = "en"
+body_parameters = ["event_update", "responsible_gambling_notice"]
+
+[whatsapp.templates.expiry_reminder]
+name = "accalab_expiry_reminder"
+category = "UTILITY"
+approval_status = "pending"
+language = "en"
+body_parameters = ["event_update", "responsible_gambling_notice"]
+
+[whatsapp.templates.phone_verification]
+name = "accalab_phone_verification"
+category = "AUTHENTICATION"
+approval_status = "pending"
+language = "en"
+body_parameters = ["verification_code", "responsible_gambling_notice"]
